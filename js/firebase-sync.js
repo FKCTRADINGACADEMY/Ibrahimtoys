@@ -8,13 +8,22 @@ const FIREBASE_CONFIG = (window.SHOP_CONFIG && window.SHOP_CONFIG.firebase) || {
   appId: "YOUR_APP_ID"
 };
 
-// Each record = separate Firestore doc: shops/sanaullah/{store}/items/{id}
+// Each record = separate Firestore doc: shops/{shopId}/{store}/items/{id}
 const ROOT = "shops/" + ((window.SHOP_CONFIG && window.SHOP_CONFIG.shopId) || "shop");
 const SYNC_STORES = [
   "products", "customers", "sales", "repairs", "installments",
   "suppliers", "expenses", "staff", "purchaseOrders", "auditLogs",
   "attendance", "returns"
 ];
+
+// DEBUG: show the first sync error visibly on screen (mobile-friendly, no console needed)
+let _debugShown = false;
+function _debugAlert(label, err) {
+  if (_debugShown) return; // only show once per session to avoid spam
+  _debugShown = true;
+  const msg = (err && (err.code || err.message)) ? (err.code || "") + " " + (err.message || "") : String(err);
+  setTimeout(() => alert("[SYNC ERROR] " + label + "\n\n" + msg), 200);
+}
 
 window.SMSync = {
   _ready: false,
@@ -61,6 +70,7 @@ window.SMSync = {
       });
     } catch (err) {
       console.error("[SMSync] Init failed:", err);
+      _debugAlert("Init failed", err);
       this._ready = false;
     }
   },
@@ -103,7 +113,7 @@ window.SMSync = {
           }
           window.dispatchEvent(new CustomEvent("sm:synced"));
         },
-        (err) => console.warn("[SMSync] Listener", store, err)
+        (err) => { console.warn("[SMSync] Listener", store, err); _debugAlert("Listener (" + store + ")", err); }
       );
       this._unsubs.push(unsub);
     }
@@ -178,6 +188,7 @@ window.SMSync = {
           await DB.removeFromQueue(item.id);
         } catch (err) {
           console.warn("[SMSync] item fail", item.id, err);
+          _debugAlert("flushQueue write (" + item.store + ")", err);
         }
       }
       window.dispatchEvent(new CustomEvent("sm:synced"));
@@ -202,6 +213,7 @@ window.SMSync = {
         }
       } catch (e) {
         console.warn("[SMSync] pull", store, e);
+        _debugAlert("pullAll (" + store + ")", e);
       }
     }
     window.dispatchEvent(new CustomEvent("sm:synced"));
@@ -226,6 +238,7 @@ window.SMSync = {
           n++;
         } catch (e) {
           console.warn("[SMSync] push fail", store, rec.id, e);
+          _debugAlert("pushAll write (" + store + ")", e);
         }
       }
     }
@@ -235,6 +248,7 @@ window.SMSync = {
   },
 
   async fullResync() {
+    _debugShown = false; // allow a fresh alert for this run
     await this.clearPending();
     await this.pullAll();
     const n = await this.pushAll();
