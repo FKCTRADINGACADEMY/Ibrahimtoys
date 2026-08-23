@@ -8,7 +8,7 @@ const FIREBASE_CONFIG = (window.SHOP_CONFIG && window.SHOP_CONFIG.firebase) || {
   appId: "YOUR_APP_ID"
 };
 
-// Each record = separate Firestore doc: shops/{shopId}/{store}/items/{id}
+// Each record = separate Firestore doc: shops/{shopId}/{store}/{id}
 const ROOT = "shops/" + ((window.SHOP_CONFIG && window.SHOP_CONFIG.shopId) || "shop");
 const SYNC_STORES = [
   "products", "customers", "sales", "repairs", "installments",
@@ -99,7 +99,7 @@ window.SMSync = {
     this.stopListeners();
     if (!this._db) return;
     for (const store of SYNC_STORES) {
-      const col = this._db.collection(ROOT + "/" + store + "/items");
+      const col = this._db.collection(ROOT + "/" + store);
       const unsub = col.onSnapshot(
         async (snap) => {
           for (const change of snap.docChanges()) {
@@ -169,7 +169,7 @@ window.SMSync = {
             continue;
           }
           const ref = this._db
-            .collection(ROOT + "/" + item.store + "/items")
+            .collection(ROOT + "/" + item.store)
             .doc(String(item.data.id));
 
           if (item.op === "delete") {
@@ -206,7 +206,7 @@ window.SMSync = {
     if (!this.isReady() || !this.currentUser()) return;
     for (const store of SYNC_STORES) {
       try {
-        const snap = await this._db.collection(ROOT + "/" + store + "/items").get();
+        const snap = await this._db.collection(ROOT + "/" + store).get();
         for (const doc of snap.docs) {
           const data = doc.data();
           if (data && data.id) await this._putLocalOnly(store, data);
@@ -232,7 +232,7 @@ window.SMSync = {
           payload._syncedAt = Date.now();
           payload._by = user.uid;
           await this._db
-            .collection(ROOT + "/" + store + "/items")
+            .collection(ROOT + "/" + store)
             .doc(String(rec.id))
             .set(payload, { merge: true });
           n++;
