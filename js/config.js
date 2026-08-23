@@ -10,8 +10,8 @@ window.SHOP_CONFIG = {
   phone: "03100014727",
   address: "Ali Khan Mirzani Center, Bhutto Chowk, Kamber",
   ownerName: "Sheeraz Ali",
-  creditLine: "Sheeraz Apple Point · Kamber",
-  creditPhone: "03100014727",
+  creditLine: "Software By Fazul Khan Chandio",
+  creditPhone: "03333909816",
 
   shopId: "sheeraz-apple-point",
 

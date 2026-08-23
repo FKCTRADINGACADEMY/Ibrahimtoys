@@ -77,33 +77,20 @@ async function router() {
 window.addEventListener("hashchange", router);
 
 // ---------- Login ----------
-// Firebase Auth only. Session saved → app works offline after first login.
+// Firebase Auth only — no demo user. Offline: restored session works after first online login.
 function renderLogin() {
-  const shop = (CFG && CFG.shopName) || "Shop";
-  const tag = (CFG && CFG.shopTagline) || "";
-  const addr = (CFG && CFG.address) || "";
-  const phone = (CFG && CFG.phone) || "";
+  const fbReady = window.SMSync && window.SMSync.isConfigured();
   root.innerHTML = `
-  <div class="login-screen login-premium">
-    <div class="login-card">
-      <img src="icons/logo.png" class="login-logo-lg" alt="logo" onerror="this.src='icons/icon-512.png'" />
-      <div class="login-brand">${escapeHtml(shop)}</div>
-      <div class="login-tag">${escapeHtml(tag)}</div>
-      ${addr ? `<div class="login-addr">${escapeHtml(addr)}</div>` : ""}
-      <h2 class="login-welcome">Welcome Back!</h2>
-      <p class="login-hint">Sign in to continue</p>
-      <div class="field">
-        <input id="li-user" type="email" placeholder="Email" autocomplete="username" />
-      </div>
-      <div class="field">
-        <input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" />
-      </div>
-      <div id="li-error" class="login-error" style="display:none"></div>
-      <button class="btn-primary login-btn" id="li-btn">Login →</button>
-      <div class="login-secure">🔒 Your data stays on this device &amp; your cloud</div>
-      ${phone ? `<div class="login-phone">📞 ${escapeHtml(phone)}</div>` : ""}
-      <div class="login-credit">${escapeHtml(typeof creditFooter === "function" ? creditFooter() : "")}</div>
-    </div>
+  <div class="login-screen">
+    <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
+    <div class="login-title">SANAULLAH</div>
+    <div class="login-sub">MOBILE COMMUNICATION</div>
+    <div class="field"><input id="li-user" type="email" placeholder="Email" autocomplete="username" /></div>
+    <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
+    <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
+    <button class="btn-primary" id="li-btn">LOGIN</button>
+    <div style="color:var(--muted);font-size:12px;margin-top:14px">${fbReady ? (navigator.onLine ? "🟢 Online · Firebase Auth" : "🟠 Offline · pehle se login session chalega") : "⚠️ Firebase config missing"}</div>
+    <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
@@ -120,34 +107,22 @@ async function doLogin() {
     err.style.display = "block";
     return;
   }
-
-  // Staff local PIN (optional, offline staff)
   if (!u.includes("@")) {
-    const staffList = await DB.getAll("staff");
-    const match = staffList.find((s) => (s.phone === u || s.name === u) && String(s.pin) === p);
-    if (match) {
-      state.user = { name: match.name, role: match.role || "staff", staffId: match.id, offline: true };
-      await DB.put("settings", { id: "session", user: state.user });
-      await logAudit("login", state.user.name + " (staff)");
-      location.hash = "#/dashboard";
-      router();
-      return;
-    }
-    err.textContent = "Firebase email se login karo (staff: name/phone + PIN).";
+    err.textContent = "Valid email address use karo.";
     err.style.display = "block";
     return;
   }
-
   if (!window.SMSync || !window.SMSync.isConfigured()) {
-    err.textContent = "Firebase config missing (js/config.js).";
+    err.textContent = "Firebase configured nahi hai.";
     err.style.display = "block";
     return;
   }
   if (!window.SMSync.isReady()) {
-    await new Promise((r) => setTimeout(r, 1000));
+    // wait briefly for SDK init
+    await new Promise((r) => setTimeout(r, 800));
   }
   if (!window.SMSync.isReady()) {
-    err.textContent = "Firebase load nahi hua. Internet check karo.";
+    err.textContent = "Firebase ready nahi. Internet check karo.";
     err.style.display = "block";
     return;
   }
@@ -164,21 +139,24 @@ async function doLogin() {
     await DB.put("settings", { id: "session", user: state.user });
     await logAudit("login", state.user.name + " logged in");
     try {
+      await SMSync.clearPending();
       await SMSync.pullAll();
     } catch (e) { console.warn(e); }
     location.hash = "#/dashboard";
     router();
   } catch (e) {
     const code = e.code || "";
+    let msg = e.message || "Login failed";
     if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
-      err.textContent = "Email ya password ghalat.";
+      msg = "Email ya password ghalat hai.";
+    } else if (code === "auth/network-request-failed" || !navigator.onLine) {
+      msg = "Internet nahi. Offline me sirf pehle wala session chalega.";
     } else if (code === "auth/too-many-requests") {
-      err.textContent = "Bohat tries — thori der baad.";
-    } else if (code === "auth/network-request-failed") {
-      err.textContent = "Network error. Offline session pehle login se chal sakti hai.";
-    } else {
-      err.textContent = e.message || "Login failed";
+      msg = "Bohat attempts. Thodi der baad try karo.";
+    } else if (code === "auth/invalid-email") {
+      msg = "Email format ghalat hai.";
     }
+    err.textContent = msg;
     err.style.display = "block";
   }
 }
@@ -215,7 +193,7 @@ function shell(activeTab, innerHtml) {
   <div class="topbar">
     <div>
       <div class="greet">Assalamualaikum, ${escapeHtml(state.user.name)} 👋</div>
-      <h1>${escapeHtml((CFG && CFG.shopName) || "Shop")}</h1>
+      <h1>Sanaullah Mobile Communication</h1>
     </div>
     <div style="display:flex;gap:8px">
       <button class="icon-btn" onclick="location.hash='#/settings'">⚙️</button>
@@ -510,15 +488,15 @@ function showInvoice(sale, opts = {}) {
   const itemsHtml = (sale.items || []).map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
     <span>${escapeHtml(i.name)} x${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
   const waText = encodeURIComponent(
-    `${(CFG && CFG.shopName) || "Shop"}\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
+    `Sanaullah Mobile Communication\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
     sale.items.map((i) => `${i.name} x${i.qty} = ${fmt(i.price * i.qty)}`).join("\n") +
     `\n\nDiscount: ${fmt(sale.discount)}\nTotal: ${fmt(sale.total)}\nPayment: ${sale.payment}\nThank you for your business!`
   );
   const qrPayload = `SM|${sale.invoiceNo}|${sale.customerName}|${sale.total}|${sale.date}`;
   overlay.innerHTML = `<div id="invoice-print-area">
   <div id="invoice-box" class="receipt-80mm">
-    <div style="text-align:center;font-weight:800;font-size:15px">${escapeHtml(((CFG && CFG.shopName) || "SHOP").toUpperCase())}</div>
-    <div style="text-align:center;font-size:10px;margin-bottom:6px">${escapeHtml((CFG && CFG.shopSubtitle) || "")}</div>
+    <div style="text-align:center;font-weight:800;font-size:15px">SANAULLAH MOBILE COMMUNICATION</div>
+    <div style="text-align:center;font-size:10px;margin-bottom:6px">Sales · Accessories · Repairs · Service</div>
     ${isDup ? '<div style="text-align:center;font-weight:800;font-size:12px;margin:4px 0">*** DUPLICATE COPY ***</div>' : ''}
     <div class="rline"></div>
     <div style="font-size:11px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}${sale.customerPhone ? " (" + escapeHtml(sale.customerPhone) + ")" : ""}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
@@ -532,7 +510,7 @@ function showInvoice(sale, opts = {}) {
     <div class="rline"></div>
     <div id="qr-code" style="display:flex;justify-content:center;margin:8px 0"></div>
     <div style="text-align:center;font-size:11px">Thank you for your business!</div>
-    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">${typeof creditFooter === "function" ? creditFooter() : ""}</div>
+    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">Software by Fazal Khan Chandio · 03333909816</div>
   </div>
   </div>
   <div class="no-print" style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px;flex-wrap:wrap">
@@ -576,10 +554,9 @@ async function printSaleThermal(sale) {
   const thick = "=".repeat(Math.min(w, 42));
 
   await printer.init();
-  const _sn = (CFG && CFG.shopName) || "SHOP";
-  await printer.printText(_sn.slice(0, 20).toUpperCase(), { align: "center", bold: true });
-  if (_sn.length > 20) await printer.printText(_sn.slice(20, 40).toUpperCase(), { align: "center", bold: true });
-  await printer.printText((CFG && CFG.shopSubtitle) || "", { align: "center" });
+  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
+  await printer.printText("COMMUNICATION", { align: "center", bold: true });
+  await printer.printText("Sales · Accessories · Repairs", { align: "center" });
   if (sale._duplicate) await printer.printText("*** DUPLICATE COPY ***", { align: "center", bold: true });
   await printer.printText(line, { align: "center" });
   await printer.printText("Invoice #" + (sale.invoiceNo || ""));
@@ -603,8 +580,8 @@ async function printSaleThermal(sale) {
   await printer.printText("Payment: " + (sale.payment || "Cash"));
   await printer.printText(line, { align: "center" });
   await printer.printText("Thank you for your business!", { align: "center" });
-  await printer.printSmall((CFG && CFG.creditLine) || "", { align: "center" });
-  if (CFG && CFG.creditPhone) await printer.printSmall(CFG.creditPhone, { align: "center" });
+  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
+  await printer.printSmall("03333909816", { align: "center" });
   await printer.feed(printer.feedBeforeCut || 1);
   await printer.doCut();
   toast("Printed");
@@ -682,7 +659,7 @@ function printBarcodeLabel(product) {
   const w = window.open("", "_blank");
   w.document.write(`<html><body style="text-align:center;font-family:sans-serif">
     <div>${escapeHtml(product.name)}</div><svg id="bc"></svg><div>${fmt(product.salePrice)}</div>
-    <div style="font-size:9px;color:#777;margin-top:6px">${typeof creditFooter === "function" ? creditFooter() : ""}</div>
+    <div style="font-size:9px;color:#777;margin-top:6px">Software by Fazal Khan Chandio · 03333909816</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"><\/script>
     <script>JsBarcode("#bc","${(product.imei || product.id)}",{width:2,height:60}); window.print();<\/script>
     </body></html>`);
@@ -885,7 +862,7 @@ const repairsOpts = {
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
       <span class="pill ${r.status === "delivered" ? "ok" : r.status === "ready" ? "warn" : "bad"}">${(r.status || "received").replace("_", " ")}</span>
       ${r.status === "ready" && r.phone ? `<a class="btn ghost" style="padding:3px 8px;font-size:11px;background:#25D366;color:#fff;border:none;text-decoration:none"
-        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. " + ((CFG && CFG.shopName) || ""))}"
+        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. Sanaullah Mobile Communication.")}"
         target="_blank" onclick="event.stopPropagation()">WhatsApp</a>` : ""}
     </div></div>`
 };
@@ -937,7 +914,7 @@ window.receiveInstallment = async (id) => {
   await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
   toast("Received " + fmt(amt));
   // quick receipt overlay
-  const msg = ((CFG && CFG.shopName) || "Shop") + "\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
+  const msg = "Sanaullah Mobile Communication\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
   if (confirm("Print / show receipt?")) {
     showInvoice({
       invoiceNo: "INST-" + (row.id || "").slice(-6),
@@ -1012,7 +989,7 @@ async function renderReports() {
   }).join("");
 
   const lowWa = lowStock.length
-    ? encodeURIComponent("Low stock alert — " + ((CFG && CFG.shopNameShort) || "Shop") + "\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
+    ? encodeURIComponent("Low stock alert — Sanaullah MC\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
     : "";
 
   const html = `
@@ -1110,7 +1087,7 @@ async function renderSettings() {
       <input type="file" id="csv-import" accept=".csv" />
     </div>` : ""}
     <button class="btn full ghost" id="set-logout">Logout</button>
-    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">${typeof creditFooter === "function" ? creditFooter() : ""}</div>
+    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">Software by Fazal Khan Chandio · 03333909816</div>
   </div>`;
   root.innerHTML = shell("settings", html);
   document.getElementById("set-branch-save").onclick = async () => {
@@ -1441,7 +1418,7 @@ async function printDayClose(day, totals) {
     await printer.connect();
   }
   await printer.init();
-  await printer.printText(((CFG && CFG.shopNameShort) || "SHOP").toUpperCase(), { align: "center", bold: true });
+  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
   await printer.printText("DAY CLOSE", { align: "center", bold: true });
   await printer.printText(day, { align: "center" });
   await printer.printText("--------------------", { align: "center" });
@@ -1449,8 +1426,8 @@ async function printDayClose(day, totals) {
   await printer.printText("Cash Out: " + fmt(totals.out));
   await printer.printText("NET:      " + fmt(totals.in - totals.out), { bold: true });
   await printer.printText("--------------------", { align: "center" });
-  await printer.printSmall((CFG && CFG.creditLine) || "", { align: "center" });
-  if (CFG && CFG.creditPhone) await printer.printSmall(CFG.creditPhone, { align: "center" });
+  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
+  await printer.printSmall("03333909816", { align: "center" });
   await printer.feed(1);
   await printer.doCut();
   toast("Day close printed");
