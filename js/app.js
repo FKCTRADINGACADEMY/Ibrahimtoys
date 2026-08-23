@@ -351,7 +351,11 @@ function salesRow(s) {
     </div>
     <div style="text-align:right">
       <div class="l-title">${fmt(s.total)}</div>
-      <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️ Duplicate</button>
+      <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='editInvoiceForm("${s.id}")'>✏️ Edit</button>
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️ Duplicate</button>
+        <button class="btn ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick='deleteInvoice("${s.id}")'>🗑️ Delete</button>
+      </div>
     </div>
   </div>`;
 }
@@ -359,6 +363,98 @@ window.reprintInvoice = async (id) => {
   const sale = await DB.get("sales", id);
   if (!sale) { toast("Invoice not found"); return; }
   showInvoice({ ...sale, _duplicate: true }, { duplicate: true });
+};
+window.deleteInvoice = async (id) => {
+  const sale = await DB.get("sales", id);
+  if (!sale) { toast("Invoice not found"); return; }
+  if (!confirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`)) return;
+  await DB.remove("sales", id);
+  await logAudit("delete", `Deleted Invoice: ${sale.invoiceNo || sale.id} (${sale.customerName || "Walk-in"}, ${fmt(sale.total)})`);
+  toast("Invoice deleted");
+  renderSalesList();
+};
+
+// ---------- Edit Invoice (customer info, payment, discount, item quantities) ----------
+window.editInvoiceForm = async (id) => {
+  const sale = await DB.get("sales", id);
+  if (!sale) { toast("Invoice not found"); return; }
+  const products = await DB.getAll("products");
+  const overlay = document.createElement("div");
+  overlay.id = "invoice-edit-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
+  const knownPayments = ["cash", "card", "credit"];
+  const itemsRows = (sale.items || []).map((it, idx) => `
+    <div class="form-row" style="display:flex;align-items:center;gap:10px">
+      <div style="flex:1">
+        <div style="font-weight:600">${escapeHtml(it.name)}</div>
+        <div style="font-size:11px;color:var(--muted)">${fmt(it.price)} each</div>
+      </div>
+      <input type="number" min="0" value="${it.qty}" data-idx="${idx}" class="edit-item-qty" style="width:70px;text-align:center" />
+    </div>`).join("");
+  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
+    <h2 style="margin-top:0">Edit Invoice #${escapeHtml(sale.invoiceNo || sale.id)}</h2>
+    <div class="form-row"><label>Customer Name</label><input id="ei-name" value="${escapeHtml(sale.customerName || "")}" /></div>
+    <div class="form-row"><label>Customer Phone</label><input id="ei-phone" value="${escapeHtml(sale.customerPhone || "")}" /></div>
+    <div class="form-row"><label>Payment</label>
+      <select id="ei-payment">
+        <option value="cash" ${sale.payment === "cash" ? "selected" : ""}>Cash</option>
+        <option value="card" ${sale.payment === "card" ? "selected" : ""}>Card</option>
+        <option value="credit" ${sale.payment === "credit" ? "selected" : ""}>Credit</option>
+        <option value="${escapeHtml(sale.payment || "other")}" ${!knownPayments.includes(sale.payment) ? "selected" : ""}>${escapeHtml(!knownPayments.includes(sale.payment) ? (sale.payment || "Other") : "Other")}</option>
+      </select>
+    </div>
+    <div class="form-row"><label>Discount</label><input id="ei-discount" type="number" value="${Number(sale.discount || 0)}" /></div>
+    <div style="font-weight:700;margin:12px 0 4px">Items (adjust quantity, 0 = remove)</div>
+    <div id="ei-items">${itemsRows || `<div class="empty">No items on this invoice.</div>`}</div>
+    <button class="btn full" id="ei-save" style="margin-top:14px">Save Changes</button>
+    <button class="btn ghost full" id="ei-cancel" style="margin-top:8px">Cancel</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#ei-cancel").onclick = () => overlay.remove();
+  overlay.querySelector("#ei-save").onclick = async () => {
+    const newName = overlay.querySelector("#ei-name").value.trim() || "Walk-in Customer";
+    const newPhone = overlay.querySelector("#ei-phone").value.trim();
+    const newPayment = overlay.querySelector("#ei-payment").value;
+    const newDiscount = Number(overlay.querySelector("#ei-discount").value || 0);
+    const qtyInputs = overlay.querySelectorAll(".edit-item-qty");
+    const newItems = (sale.items || [])
+      .map((it, idx) => ({ ...it, qty: Math.max(0, Number(qtyInputs[idx].value || 0)) }))
+      .filter((it) => it.qty > 0);
+
+    // Restore old quantities to stock, then deduct new quantities
+    const touched = new Set();
+    for (const oldItem of (sale.items || [])) {
+      const p = products.find((x) => x.id === oldItem.id);
+      if (p) { p.qty = Number(p.qty || 0) + Number(oldItem.qty || 0); touched.add(p.id); }
+    }
+    for (const newItem of newItems) {
+      const p = products.find((x) => x.id === newItem.id);
+      if (p) { p.qty = Math.max(0, Number(p.qty || 0) - Number(newItem.qty || 0)); touched.add(p.id); }
+    }
+    for (const p of products) {
+      if (touched.has(p.id)) await DB.put("products", p);
+    }
+
+    const subtotal = newItems.reduce((a, c) => a + c.price * c.qty, 0);
+    const total = Math.max(0, subtotal - newDiscount);
+    const profit = newItems.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - newDiscount;
+
+    sale.customerName = newName;
+    sale.customerPhone = newPhone;
+    sale.payment = newPayment;
+    sale.discount = newDiscount;
+    sale.items = newItems;
+    sale.subtotal = subtotal;
+    sale.total = total;
+    sale.profit = profit;
+    sale.updatedAt = Date.now();
+
+    await DB.put("sales", sale);
+    await logAudit("update", `Edited Invoice: ${sale.invoiceNo || sale.id} — new total ${fmt(total)}`);
+    overlay.remove();
+    toast("Invoice updated");
+    renderSalesList();
+  };
 };
 
 async function renderPOS() {
