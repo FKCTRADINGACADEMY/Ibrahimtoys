@@ -80,17 +80,19 @@ window.addEventListener("hashchange", router);
 // Firebase Auth only — no demo user. Offline: restored session works after first online login.
 function renderLogin() {
   const fbReady = window.SMSync && window.SMSync.isConfigured();
+  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
+  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
   root.innerHTML = `
   <div class="login-screen">
     <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
-    <div class="login-title">SANAULLAH</div>
-    <div class="login-sub">MOBILE COMMUNICATION</div>
+    <div class="login-title">${escapeHtml(shopName)}</div>
+    <div class="login-sub">${escapeHtml(shopSub)}</div>
     <div class="field"><input id="li-user" type="email" placeholder="Email" autocomplete="username" /></div>
     <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
     <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
     <button class="btn-primary" id="li-btn">LOGIN</button>
     <div style="color:var(--muted);font-size:12px;margin-top:14px">${fbReady ? (navigator.onLine ? "🟢 Online · Firebase Auth" : "🟠 Offline · pehle se login session chalega") : "⚠️ Firebase config missing"}</div>
-    <div style="color:var(--muted);font-size:10px;margin-top:18px">Software by Fazal Khan Chandio · 03333909816</div>
+    <div style="color:var(--muted);font-size:10px;margin-top:18px">${escapeHtml(window.creditFooter ? creditFooter() : "")}</div>
   </div>`;
   document.getElementById("li-btn").onclick = doLogin;
   document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
@@ -189,11 +191,12 @@ async function tryRestoreSession() {
 // ---------- Shell (topbar + bottomnav) wrapper ----------
 function shell(activeTab, innerHtml) {
   const pending = window._pendingCount || 0;
+  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
   return `
   <div class="topbar">
     <div>
       <div class="greet">Assalamualaikum, ${escapeHtml(state.user.name)} 👋</div>
-      <h1>Sanaullah Mobile Communication</h1>
+      <h1>${escapeHtml(shopName)}</h1>
     </div>
     <div style="display:flex;gap:8px">
       <button class="icon-btn" onclick="location.hash='#/settings'">⚙️</button>
@@ -482,21 +485,25 @@ async function checkout(products, customers) {
 
 function showInvoice(sale, opts = {}) {
   const isDup = !!opts.duplicate;
+  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
+  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP";
+  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
+  const credit = window.creditFooter ? creditFooter() : "";
   const overlay = document.createElement("div");
   overlay.id = "invoice-overlay";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
   const itemsHtml = (sale.items || []).map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
     <span>${escapeHtml(i.name)} x${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
   const waText = encodeURIComponent(
-    `Sanaullah Mobile Communication\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
+    `${shopName}\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
     sale.items.map((i) => `${i.name} x${i.qty} = ${fmt(i.price * i.qty)}`).join("\n") +
     `\n\nDiscount: ${fmt(sale.discount)}\nTotal: ${fmt(sale.total)}\nPayment: ${sale.payment}\nThank you for your business!`
   );
-  const qrPayload = `SM|${sale.invoiceNo}|${sale.customerName}|${sale.total}|${sale.date}`;
+  const qrPayload = `${shopNameShort}|${sale.invoiceNo}|${sale.customerName}|${sale.total}|${sale.date}`;
   overlay.innerHTML = `<div id="invoice-print-area">
   <div id="invoice-box" class="receipt-80mm">
-    <div style="text-align:center;font-weight:800;font-size:15px">SANAULLAH MOBILE COMMUNICATION</div>
-    <div style="text-align:center;font-size:10px;margin-bottom:6px">Sales · Accessories · Repairs · Service</div>
+    <div style="text-align:center;font-weight:800;font-size:15px">${escapeHtml(shopNameShort)}</div>
+    <div style="text-align:center;font-size:10px;margin-bottom:6px">${escapeHtml(shopSub)}</div>
     ${isDup ? '<div style="text-align:center;font-weight:800;font-size:12px;margin:4px 0">*** DUPLICATE COPY ***</div>' : ''}
     <div class="rline"></div>
     <div style="font-size:11px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}${sale.customerPhone ? " (" + escapeHtml(sale.customerPhone) + ")" : ""}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
@@ -510,7 +517,7 @@ function showInvoice(sale, opts = {}) {
     <div class="rline"></div>
     <div id="qr-code" style="display:flex;justify-content:center;margin:8px 0"></div>
     <div style="text-align:center;font-size:11px">Thank you for your business!</div>
-    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">Software by Fazal Khan Chandio · 03333909816</div>
+    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">${escapeHtml(credit)}</div>
   </div>
   </div>
   <div class="no-print" style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px;flex-wrap:wrap">
@@ -539,6 +546,9 @@ async function printSaleThermal(sale) {
     toast("Printer library missing");
     return;
   }
+  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP POS";
+  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
+  const credit = window.creditFooter ? creditFooter() : "";
   const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80, chunkSize: 48, chunkDelay: 40, feedBeforeCut: 1, usePartialCut: true });
   window.shopPrinter = printer;
 
@@ -554,9 +564,8 @@ async function printSaleThermal(sale) {
   const thick = "=".repeat(Math.min(w, 42));
 
   await printer.init();
-  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
-  await printer.printText("COMMUNICATION", { align: "center", bold: true });
-  await printer.printText("Sales · Accessories · Repairs", { align: "center" });
+  await printer.printText(shopNameShort, { align: "center", bold: true });
+  if (shopSub) await printer.printText(shopSub, { align: "center" });
   if (sale._duplicate) await printer.printText("*** DUPLICATE COPY ***", { align: "center", bold: true });
   await printer.printText(line, { align: "center" });
   await printer.printText("Invoice #" + (sale.invoiceNo || ""));
@@ -580,8 +589,7 @@ async function printSaleThermal(sale) {
   await printer.printText("Payment: " + (sale.payment || "Cash"));
   await printer.printText(line, { align: "center" });
   await printer.printText("Thank you for your business!", { align: "center" });
-  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
-  await printer.printSmall("03333909816", { align: "center" });
+  if (credit) await printer.printSmall(credit, { align: "center" });
   await printer.feed(printer.feedBeforeCut || 1);
   await printer.doCut();
   toast("Printed");
@@ -656,10 +664,11 @@ function openBarcodeScanner(onResult) {
 // ---------- Barcode label printing (JsBarcode, loaded via CDN) ----------
 function printBarcodeLabel(product) {
   if (typeof JsBarcode === "undefined") { toast("Barcode library not loaded — check your internet connection"); return; }
+  const credit = window.creditFooter ? creditFooter() : "";
   const w = window.open("", "_blank");
   w.document.write(`<html><body style="text-align:center;font-family:sans-serif">
     <div>${escapeHtml(product.name)}</div><svg id="bc"></svg><div>${fmt(product.salePrice)}</div>
-    <div style="font-size:9px;color:#777;margin-top:6px">Software by Fazal Khan Chandio · 03333909816</div>
+    <div style="font-size:9px;color:#777;margin-top:6px">${escapeHtml(credit)}</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"><\/script>
     <script>JsBarcode("#bc","${(product.imei || product.id)}",{width:2,height:60}); window.print();<\/script>
     </body></html>`);
@@ -862,7 +871,7 @@ const repairsOpts = {
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
       <span class="pill ${r.status === "delivered" ? "ok" : r.status === "ready" ? "warn" : "bad"}">${(r.status || "received").replace("_", " ")}</span>
       ${r.status === "ready" && r.phone ? `<a class="btn ghost" style="padding:3px 8px;font-size:11px;background:#25D366;color:#fff;border:none;text-decoration:none"
-        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. Sanaullah Mobile Communication.")}"
+        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. " + ((window.CFG && CFG.shopName) || "") + ".")}"
         target="_blank" onclick="event.stopPropagation()">WhatsApp</a>` : ""}
     </div></div>`
 };
@@ -914,7 +923,7 @@ window.receiveInstallment = async (id) => {
   await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
   toast("Received " + fmt(amt));
   // quick receipt overlay
-  const msg = "Sanaullah Mobile Communication\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
+  const msg = ((window.CFG && CFG.shopName) || "") + "\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
   if (confirm("Print / show receipt?")) {
     showInvoice({
       invoiceNo: "INST-" + (row.id || "").slice(-6),
@@ -989,7 +998,7 @@ async function renderReports() {
   }).join("");
 
   const lowWa = lowStock.length
-    ? encodeURIComponent("Low stock alert — Sanaullah MC\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
+    ? encodeURIComponent("Low stock alert — " + ((window.CFG && CFG.shopNameShort) || "Shop") + "\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
     : "";
 
   const html = `
@@ -1087,7 +1096,7 @@ async function renderSettings() {
       <input type="file" id="csv-import" accept=".csv" />
     </div>` : ""}
     <button class="btn full ghost" id="set-logout">Logout</button>
-    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">Software by Fazal Khan Chandio · 03333909816</div>
+    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">${escapeHtml(window.creditFooter ? creditFooter() : "")}</div>
   </div>`;
   root.innerHTML = shell("settings", html);
   document.getElementById("set-branch-save").onclick = async () => {
@@ -1406,6 +1415,8 @@ async function renderCashbook() {
 }
 
 async function printDayClose(day, totals) {
+  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP POS";
+  const credit = window.creditFooter ? creditFooter() : "";
   if (typeof ThermalPrinter === "undefined") {
     // screen fallback
     alert("Day Close " + day + "\nIn: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out));
@@ -1418,7 +1429,7 @@ async function printDayClose(day, totals) {
     await printer.connect();
   }
   await printer.init();
-  await printer.printText("SANAULLAH MOBILE", { align: "center", bold: true });
+  await printer.printText(shopNameShort, { align: "center", bold: true });
   await printer.printText("DAY CLOSE", { align: "center", bold: true });
   await printer.printText(day, { align: "center" });
   await printer.printText("--------------------", { align: "center" });
@@ -1426,8 +1437,7 @@ async function printDayClose(day, totals) {
   await printer.printText("Cash Out: " + fmt(totals.out));
   await printer.printText("NET:      " + fmt(totals.in - totals.out), { bold: true });
   await printer.printText("--------------------", { align: "center" });
-  await printer.printSmall("Software by Fazal Khan Chandio", { align: "center" });
-  await printer.printSmall("03333909816", { align: "center" });
+  if (credit) await printer.printSmall(credit, { align: "center" });
   await printer.feed(1);
   await printer.doCut();
   toast("Day close printed");
