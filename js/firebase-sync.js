@@ -1,15 +1,15 @@
 /* firebase-sync.js — Firebase Auth + Firestore (1 doc per record, full sync) */
 const FIREBASE_CONFIG = (window.SHOP_CONFIG && window.SHOP_CONFIG.firebase) || {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCiZlQNNahbM8dMg5KlS_WDOL0x0NTZiCs",
+  authDomain: "sheeraz-apple-point.firebaseapp.com",
+  projectId: "sheeraz-apple-point",
+  storageBucket: "sheeraz-apple-point.firebasestorage.app",
+  messagingSenderId: "786751552575",
+  appId: "1:786751552575:web:3cea064213b5e8e9180c8a"
 };
 
 // Each record = separate Firestore doc: shops/{shopId}/{store}/{id}
-const ROOT = "shops/" + ((window.SHOP_CONFIG && window.SHOP_CONFIG.shopId) || "shop");
+const ROOT = "shops/" + ((window.SHOP_CONFIG && window.SHOP_CONFIG.shopId) || "sheeraz-apple-point");
 const SYNC_STORES = [
   "products", "customers", "sales", "repairs", "installments",
   "suppliers", "expenses", "staff", "purchaseOrders", "auditLogs",
