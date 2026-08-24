@@ -273,9 +273,9 @@ function navBtn(route, icon, label, active) {
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
-  const [sales, repairs, installments, products, returnsList] = await Promise.all([
+  const [sales, repairs, installments, products, returnsList, customers] = await Promise.all([
     DB.getAll("sales"), DB.getAll("repairs"), DB.getAll("installments"),
-    DB.getAll("products"), DB.getAll("returns")
+    DB.getAll("products"), DB.getAll("returns"), DB.getAll("customers")
   ]);
   const today = todayKey();
   const todaySales = sales.filter((s) => (s.date || "").slice(0, 10) === today);
@@ -309,6 +309,11 @@ async function renderDashboard() {
       <div class="label">Products</div>
       <div class="value">${products.length}</div>
       <div class="delta">Stock list · tap</div>
+    </div>
+    <div class="stat-card stat-purple stat-tap" onclick="location.hash='#/customers'">
+      <div class="label">Customers</div>
+      <div class="value">${customers.length}</div>
+      <div class="delta">Total customers · tap</div>
     </div>
     <div class="stat-card stat-orange stat-tap" onclick="location.hash='#/products'">
       <div class="label">Stock Alert</div>
