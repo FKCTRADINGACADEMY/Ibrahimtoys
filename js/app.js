@@ -17,6 +17,59 @@ function toast(msg) {
   setTimeout(() => t.remove(), 2200);
 }
 
+// ---------- Reusable in-app dialogs (replace native alert/confirm/prompt everywhere) ----------
+function showConfirm(message, opts = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:400px;border-radius:16px;padding:18px">
+      ${opts.title ? `<div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(opts.title)}</div>` : ""}
+      <div class="l-sub" style="margin-bottom:16px;white-space:pre-wrap">${escapeHtml(message)}</div>
+      <div style="display:flex;gap:10px">
+        <button class="btn ghost full" id="gc-cancel">${escapeHtml(opts.cancelText || "Cancel")}</button>
+        <button class="btn ${opts.danger ? "danger" : ""} full" id="gc-ok">${escapeHtml(opts.okText || "OK")}</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#gc-cancel").onclick = () => { overlay.remove(); resolve(false); };
+    overlay.querySelector("#gc-ok").onclick = () => { overlay.remove(); resolve(true); };
+  });
+}
+function showAlert(message, opts = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:420px;border-radius:16px;padding:18px;max-height:80vh;overflow:auto">
+      ${opts.title ? `<div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(opts.title)}</div>` : ""}
+      <div class="l-sub" style="margin-bottom:16px;white-space:pre-wrap">${escapeHtml(message)}</div>
+      <button class="btn full" id="ga-ok">${escapeHtml(opts.okText || "OK")}</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#ga-ok").onclick = () => { overlay.remove(); resolve(); };
+  });
+}
+function showPrompt(label, defaultValue = "", opts = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:flex-end";
+    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px">
+      ${opts.title ? `<h2 style="margin-top:0">${escapeHtml(opts.title)}</h2>` : ""}
+      <div class="form-row"><label>${escapeHtml(label)}</label>
+        <input id="gp-input" type="${opts.type || "text"}" value="${escapeHtml(defaultValue)}" />
+      </div>
+      <button class="btn full" id="gp-ok">${escapeHtml(opts.okText || "OK")}</button>
+      <button class="btn ghost full" id="gp-cancel" style="margin-top:8px">Cancel</button>
+    </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector("#gp-input");
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+    const submit = () => { const v = input.value; overlay.remove(); resolve(v); };
+    overlay.querySelector("#gp-cancel").onclick = () => { overlay.remove(); resolve(null); };
+    overlay.querySelector("#gp-ok").onclick = submit;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  });
+}
+
 // ---------- Routing ----------
 const routes = {
   "": () => renderDashboard(),
@@ -367,7 +420,8 @@ window.reprintInvoice = async (id) => {
 window.deleteInvoice = async (id) => {
   const sale = await DB.get("sales", id);
   if (!sale) { toast("Invoice not found"); return; }
-  if (!confirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`)) return;
+  const okDel = await showConfirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`, { title: "Delete Invoice?", okText: "Delete", danger: true });
+  if (!okDel) return;
   await DB.remove("sales", id);
   await logAudit("delete", `Deleted Invoice: ${sale.invoiceNo || sale.id} (${sale.customerName || "Walk-in"}, ${fmt(sale.total)})`);
   toast("Invoice deleted");
@@ -890,6 +944,8 @@ function openForm(opts, existing) {
   };
   if (existing) {
     overlay.querySelector("#form-del").onclick = async () => {
+      const okDel = await showConfirm(`${(existing.name || existing.customerName || existing.supplierName || opts.title.replace(/s$/, ""))} delete karein? Ye action wapis nahi ho sakta.`, { title: "Delete?", okText: "Delete", danger: true });
+      if (!okDel) return;
       await DB.remove(opts.store, existing.id);
       await logAudit("delete", `Deleted ${opts.title.replace(/s$/, "")}: ${existing.name || existing.title || existing.customerName || existing.supplierName || existing.id}`);
       overlay.remove();
@@ -1035,20 +1091,55 @@ const renderInstallments = moduleListPage(installmentsOpts);
 window.receiveInstallment = async (id) => {
   const row = await DB.get("installments", id);
   if (!row) return;
-  const rem = Number(row.remaining != null ? row.remaining : (Number(row.totalAmount||0) - Number(row.paid||0)));
-  const raw = prompt("Receive amount (Rs). Remaining: " + rem, String(rem));
-  if (raw == null) return;
-  const amt = Number(raw);
-  if (!(amt > 0)) { toast("Invalid amount"); return; }
-  row.paid = Number(row.paid || 0) + amt;
-  row.remaining = Math.max(0, Number(row.totalAmount || 0) - row.paid);
-  if (row.remaining <= 0) row.status = "paid";
-  await DB.put("installments", row);
-  await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
-  toast("Received " + fmt(amt));
-  // quick receipt overlay
-  const msg = ((window.CFG && CFG.shopName) || "") + "\nInstallment Receipt\n" + (row.customerName||"") + "\nPaid: " + fmt(amt) + "\nRemaining: " + fmt(row.remaining);
-  if (confirm("Print / show receipt?")) {
+  const rem = Number(row.remaining != null ? row.remaining : (Number(row.totalAmount || 0) - Number(row.paid || 0)));
+
+  const overlay = document.createElement("div");
+  overlay.id = "receive-inst-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
+  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px">
+    <h2 style="margin-top:0">Receive Payment</h2>
+    <div class="l-sub" style="margin-bottom:10px">${escapeHtml(row.customerName || "")} · ${escapeHtml(row.item || "")}<br/>Remaining: ${fmt(rem)}</div>
+    <div class="form-row"><label>Amount Received (Rs)</label>
+      <input id="ri-amount" type="number" min="1" max="${rem}" value="${rem}" autofocus />
+    </div>
+    <button class="btn full" id="ri-save">💵 Receive</button>
+    <button class="btn ghost full" id="ri-cancel" style="margin-top:8px">Cancel</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  const amountInput = overlay.querySelector("#ri-amount");
+  amountInput.focus();
+  amountInput.select();
+  overlay.querySelector("#ri-cancel").onclick = () => overlay.remove();
+  overlay.querySelector("#ri-save").onclick = async () => {
+    const amt = Number(amountInput.value || 0);
+    if (!(amt > 0)) { toast("Invalid amount"); return; }
+    row.paid = Number(row.paid || 0) + amt;
+    row.remaining = Math.max(0, Number(row.totalAmount || 0) - row.paid);
+    if (row.remaining <= 0) row.status = "paid";
+    await DB.put("installments", row);
+    await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
+    toast("Received " + fmt(amt));
+    overlay.remove();
+    askShowInstallmentReceipt(row, amt);
+  };
+};
+
+function askShowInstallmentReceipt(row, amt) {
+  const overlay = document.createElement("div");
+  overlay.id = "receipt-confirm-overlay";
+  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
+  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:400px;border-radius:16px;padding:18px;text-align:center">
+    <div style="font-weight:700;font-size:16px;margin-bottom:6px">Payment Received</div>
+    <div class="l-sub" style="margin-bottom:16px">${fmt(amt)} received. Print / show receipt?</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn ghost full" id="rc-no">No</button>
+      <button class="btn full" id="rc-yes">🖨️ Show Receipt</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#rc-no").onclick = () => { overlay.remove(); router(); };
+  overlay.querySelector("#rc-yes").onclick = () => {
+    overlay.remove();
     showInvoice({
       invoiceNo: "INST-" + (row.id || "").slice(-6),
       customerName: row.customerName || "",
@@ -1057,9 +1148,9 @@ window.receiveInstallment = async (id) => {
       subtotal: amt, discount: 0, total: amt, payment: "Installment",
       date: new Date().toISOString(), _duplicate: false
     });
-  }
-  router();
-};
+    router();
+  };
+}
 
 
 // ---------- Suppliers ----------
@@ -1277,7 +1368,8 @@ async function renderSettings() {
   const syncFull = document.getElementById("sync-full");
   if (syncFull) syncFull.onclick = async () => {
     if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
-    if (!confirm("Full resync: pending clear + pull cloud + push all local docs?")) return;
+    const okResync = await showConfirm("Pending clear + pull cloud + push all local docs.", { title: "Full Cloud Resync?", okText: "Resync" });
+    if (!okResync) return;
     toast("Full resync… wait");
     try {
       const n = await SMSync.fullResync();
@@ -1287,7 +1379,8 @@ async function renderSettings() {
     } catch (e) { toast(e.message || "Resync failed"); }
   };
   if (syncClear) syncClear.onclick = async () => {
-    if (!confirm("Pending queue clear? Local data safe rahega.")) return;
+    const okClear = await showConfirm("Local data safe rahega — sirf pending sync queue clear hogi.", { title: "Clear Pending Queue?", okText: "Clear" });
+    if (!okClear) return;
     await SMSync.clearPending();
     window._pendingCount = 0;
     updateSyncStatusBar();
@@ -1407,7 +1500,7 @@ async function restoreStockFromReturn(record) {
 
 /** IMEI / sold phone registry search */
 async function searchImeiRegistry() {
-  const q = prompt("IMEI / Serial search:");
+  const q = await showPrompt("IMEI / Serial number", "", { title: "IMEI / Serial Search", okText: "Search" });
   if (!q) return;
   const qq = q.trim().toLowerCase();
   const products = await DB.getAll("products");
@@ -1427,7 +1520,7 @@ async function searchImeiRegistry() {
     }
   }
   if (!hits.length) toast("No IMEI match");
-  else alert("IMEI results:\n\n" + hits.slice(0, 15).join("\n"));
+  else await showAlert(hits.slice(0, 15).join("\n"), { title: "IMEI Results" });
 }
 window.searchImeiRegistry = searchImeiRegistry;
 
@@ -1543,7 +1636,7 @@ async function printDayClose(day, totals) {
   const credit = window.creditFooter ? creditFooter() : "";
   if (typeof ThermalPrinter === "undefined") {
     // screen fallback
-    alert("Day Close " + day + "\nIn: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out));
+    await showAlert("In: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out), { title: "Day Close — " + day });
     return;
   }
   const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80 });
@@ -1611,12 +1704,10 @@ function updateSyncStatusBar() {
     const last = localStorage.getItem("sm_last_backup_day");
     const day = todayKey();
     if (state.user && last !== day) {
-      setTimeout(() => {
-        if (confirm("Daily backup? Shop data JSON download ho jaye.")) {
-          backupNow().then(() => localStorage.setItem("sm_last_backup_day", day));
-        } else {
-          localStorage.setItem("sm_last_backup_day", day);
-        }
+      setTimeout(async () => {
+        const okBackup = await showConfirm("Shop data JSON download ho jaye?", { title: "Daily Backup", okText: "Backup Now" });
+        if (okBackup) await backupNow();
+        localStorage.setItem("sm_last_backup_day", day);
       }, 2500);
     }
   } catch (e) {}
