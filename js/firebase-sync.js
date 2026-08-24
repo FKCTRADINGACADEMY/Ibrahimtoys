@@ -1,29 +1,25 @@
-/* firebase-sync.js — Firebase Auth + Firestore (1 doc per record, full sync) */
-const FIREBASE_CONFIG = (window.SHOP_CONFIG && window.SHOP_CONFIG.firebase) || {
-  apiKey: "AIzaSyCiZlQNNahbM8dMg5KlS_WDOL0x0NTZiCs",
-  authDomain: "sheeraz-apple-point.firebaseapp.com",
-  projectId: "sheeraz-apple-point",
-  storageBucket: "sheeraz-apple-point.firebasestorage.app",
-  messagingSenderId: "786751552575",
-  appId: "1:786751552575:web:3cea064213b5e8e9180c8a"
-};
+/* firebase-sync.js — CFG-based (Sheraz / any shop) + push-first fullResync
+   Firebase keys + shop path: js/config.js → window.CFG
+*/
+function getFirebaseConfig() {
+  if (window.CFG && CFG.firebase) return CFG.firebase;
+  if (window.CFG && CFG.firebaseConfig) return CFG.firebaseConfig;
+  return null;
+}
 
-// Each record = separate Firestore doc: shops/{shopId}/{store}/{id}
-const ROOT = "shops/" + ((window.SHOP_CONFIG && window.SHOP_CONFIG.shopId) || "sheeraz-apple-point");
+function getSyncRoot() {
+  // e.g. "shops/sheraz" or "shops/my-shop"
+  if (window.CFG && CFG.syncRoot) return CFG.syncRoot;
+  if (window.CFG && CFG.shopId) return "shops/" + CFG.shopId;
+  if (window.CFG && CFG.shopSlug) return "shops/" + CFG.shopSlug;
+  return "shops/default";
+}
+
 const SYNC_STORES = [
   "products", "customers", "sales", "repairs", "installments",
   "suppliers", "expenses", "staff", "purchaseOrders", "auditLogs",
   "attendance", "returns"
 ];
-
-// DEBUG: show the first sync error visibly on screen (mobile-friendly, no console needed)
-let _debugShown = false;
-function _debugAlert(label, err) {
-  if (_debugShown) return; // only show once per session to avoid spam
-  _debugShown = true;
-  const msg = (err && (err.code || err.message)) ? (err.code || "") + " " + (err.message || "") : String(err);
-  setTimeout(() => alert("[SYNC ERROR] " + label + "\n\n" + msg), 200);
-}
 
 window.SMSync = {
   _ready: false,
@@ -31,15 +27,17 @@ window.SMSync = {
   _auth: null,
   _unsubs: [],
   _flushing: false,
+  _root: null,
 
   isReady() { return this._ready && !!this._db; },
   isConfigured() {
-    return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
+    const c = getFirebaseConfig();
+    return !!(c && c.apiKey && c.apiKey !== "YOUR_API_KEY");
   },
 
   async init() {
     if (!this.isConfigured()) {
-      console.info("[SMSync] Firebase not configured — offline-only.");
+      console.info("[SMSync] Firebase not configured in CFG — offline-only.");
       return;
     }
     if (typeof firebase === "undefined") {
@@ -47,6 +45,8 @@ window.SMSync = {
       return;
     }
     try {
+      const FIREBASE_CONFIG = getFirebaseConfig();
+      this._root = getSyncRoot();
       if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
       this._auth = firebase.auth();
       try {
@@ -57,22 +57,26 @@ window.SMSync = {
         await this._db.enablePersistence({ synchronizeTabs: true });
       } catch (e) {}
       this._ready = true;
-      console.info("[SMSync] Firebase ready");
+      console.info("[SMSync] Firebase ready · root:", this._root);
 
       this._auth.onAuthStateChanged(async (user) => {
         if (user) {
           console.info("[SMSync] Signed in", user.email || user.uid);
           await this.startListeners();
           await this.flushQueue();
+          setTimeout(() => this.pullAll().catch(() => {}), 800);
         } else {
           this.stopListeners();
         }
       });
     } catch (err) {
       console.error("[SMSync] Init failed:", err);
-      _debugAlert("Init failed", err);
       this._ready = false;
     }
+  },
+
+  _col(store) {
+    return this._db.collection(this._root + "/" + store);
   },
 
   async signIn(email, password) {
@@ -99,7 +103,7 @@ window.SMSync = {
     this.stopListeners();
     if (!this._db) return;
     for (const store of SYNC_STORES) {
-      const col = this._db.collection(ROOT + "/" + store);
+      const col = this._col(store);
       const unsub = col.onSnapshot(
         async (snap) => {
           for (const change of snap.docChanges()) {
@@ -113,7 +117,7 @@ window.SMSync = {
           }
           window.dispatchEvent(new CustomEvent("sm:synced"));
         },
-        (err) => { console.warn("[SMSync] Listener", store, err); _debugAlert("Listener (" + store + ")", err); }
+        (err) => console.warn("[SMSync] Listener", store, err)
       );
       this._unsubs.push(unsub);
     }
@@ -161,16 +165,14 @@ window.SMSync = {
     this._flushing = true;
     try {
       const queue = await DB.getSyncQueue();
-      const batch = queue.slice(0, 80);
+      const batch = queue.slice(0, 100);
       for (const item of batch) {
         try {
           if (!item.data || !item.data.id) {
             await DB.removeFromQueue(item.id);
             continue;
           }
-          const ref = this._db
-            .collection(ROOT + "/" + item.store)
-            .doc(String(item.data.id));
+          const ref = this._col(item.store).doc(String(item.data.id));
 
           if (item.op === "delete") {
             await ref.delete();
@@ -188,7 +190,6 @@ window.SMSync = {
           await DB.removeFromQueue(item.id);
         } catch (err) {
           console.warn("[SMSync] item fail", item.id, err);
-          _debugAlert("flushQueue write (" + item.store + ")", err);
         }
       }
       window.dispatchEvent(new CustomEvent("sm:synced"));
@@ -206,14 +207,13 @@ window.SMSync = {
     if (!this.isReady() || !this.currentUser()) return;
     for (const store of SYNC_STORES) {
       try {
-        const snap = await this._db.collection(ROOT + "/" + store).get();
+        const snap = await this._col(store).get();
         for (const doc of snap.docs) {
           const data = doc.data();
           if (data && data.id) await this._putLocalOnly(store, data);
         }
       } catch (e) {
         console.warn("[SMSync] pull", store, e);
-        _debugAlert("pullAll (" + store + ")", e);
       }
     }
     window.dispatchEvent(new CustomEvent("sm:synced"));
@@ -231,14 +231,11 @@ window.SMSync = {
           const payload = this._compact(rec);
           payload._syncedAt = Date.now();
           payload._by = user.uid;
-          await this._db
-            .collection(ROOT + "/" + store)
-            .doc(String(rec.id))
-            .set(payload, { merge: true });
+          if (!payload.updatedAt) payload.updatedAt = Date.now();
+          await this._col(store).doc(String(rec.id)).set(payload, { merge: true });
           n++;
         } catch (e) {
           console.warn("[SMSync] push fail", store, rec.id, e);
-          _debugAlert("pushAll write (" + store + ")", e);
         }
       }
     }
@@ -247,17 +244,18 @@ window.SMSync = {
     return n;
   },
 
+  /** Local → cloud pehle, phir cloud → local */
   async fullResync() {
-    _debugShown = false; // allow a fresh alert for this run
     await this.clearPending();
-    await this.pullAll();
     const n = await this.pushAll();
+    await this.pullAll();
     return n;
   }
 };
 
 function openDBForSync() {
   return new Promise((resolve, reject) => {
+    // same DB name as db.js (change if Sheraz uses different)
     const req = indexedDB.open("sm-app-v2", 3);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -271,11 +269,14 @@ if (document.readyState === "loading") {
 }
 
 window.addEventListener("online", () => {
-  if (SMSync.isReady()) SMSync.flushQueue().catch(console.warn);
+  if (SMSync.isReady()) {
+    SMSync.flushQueue().catch(console.warn);
+    setTimeout(() => SMSync.pullAll().catch(() => {}), 500);
+  }
 });
 
 setInterval(() => {
   if (navigator.onLine && window.SMSync && SMSync.isReady() && SMSync.currentUser()) {
     SMSync.flushQueue().catch(() => {});
   }
-}, 1000);
+}, 400);
