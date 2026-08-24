@@ -854,6 +854,34 @@ function openForm(opts, existing) {
       await restoreStockFromReturn(record);
       record.stockRestored = true;
     }
+    // Installments: record the underlying sale immediately so it counts in Reports/Dashboard totals
+    if (opts.store === "installments" && !existing) {
+      const instSale = {
+        invoiceNo: "INST-" + Date.now().toString().slice(-6),
+        customerId: null,
+        customerName: record.customerName || "Walk-in Customer",
+        customerPhone: "",
+        items: [{ id: null, name: record.item || "Installment Sale", price: Number(record.totalAmount || 0), cost: 0, qty: 1 }],
+        subtotal: Number(record.totalAmount || 0), discount: 0, total: Number(record.totalAmount || 0),
+        profit: 0, payment: "Installment", date: new Date().toISOString()
+      };
+      await DB.put("sales", instSale);
+      record.saleRecorded = true;
+    }
+    // Repairs: record a sale the moment a job is marked "delivered" (payment collected) — once only
+    if (opts.store === "repairs" && record.status === "delivered" && !record.saleRecorded && Number(record.cost || 0) > 0) {
+      const repairSale = {
+        invoiceNo: "RPR-" + Date.now().toString().slice(-6),
+        customerId: null,
+        customerName: record.customerName || "Walk-in Customer",
+        customerPhone: record.phone || "",
+        items: [{ id: null, name: "Repair: " + (record.device || "Device") + (record.fault ? " — " + record.fault : ""), price: Number(record.cost || 0), cost: 0, qty: 1 }],
+        subtotal: Number(record.cost || 0), discount: 0, total: Number(record.cost || 0),
+        profit: Number(record.cost || 0), payment: "Cash", date: new Date().toISOString()
+      };
+      await DB.put("sales", repairSale);
+      record.saleRecorded = true;
+    }
     await DB.put(opts.store, record);
     await logAudit(existing ? "update" : "create", `${existing ? "Updated" : "Created"} ${opts.title.replace(/s$/, "")}: ${record.name || record.title || record.customerName || record.supplierName || record.id}`);
     overlay.remove();
