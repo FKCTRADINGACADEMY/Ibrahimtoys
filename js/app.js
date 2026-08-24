@@ -604,8 +604,8 @@ window.cartQty = (i, d) => { cart[i].qty += d; if (cart[i].qty <= 0) cart.splice
 
 async function checkout(products, customers) {
   if (!cart.length) { toast("Cart is empty"); return; }
-  const custId = document.getElementById("pos-cust").value;
-  const cust = customers.find((c) => c.id === custId);
+  let custId = document.getElementById("pos-cust").value;
+  let cust = customers.find((c) => c.id === custId);
   const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
   const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
   const discount = Number(document.getElementById("pos-discount").value || 0);
@@ -616,9 +616,43 @@ async function checkout(products, customers) {
   const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
   const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
   const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
-  const sale = { invoiceNo, customerId: custId || null, customerName, customerPhone,
+
+  // Auto-create / link customer
+  if (customerName && customerName !== "Walk-in Customer" && !cust) {
+    const allCust = await DB.getAll("customers");
+    cust = allCust.find((c) =>
+      (c.name || "").toLowerCase() === customerName.toLowerCase() ||
+      (customerPhone && c.phone === customerPhone)
+    );
+    if (!cust) {
+      cust = { name: customerName, phone: customerPhone, points: 0 };
+      await DB.put("customers", cust);
+      custId = cust.id;
+    } else {
+      custId = cust.id;
+      if (customerPhone && !cust.phone) { cust.phone = customerPhone; await DB.put("customers", cust); }
+    }
+  }
+
+  // Installment: advance (app modal — no browser domain)
+  let advancePaid = 0;
+  if ((payment || "").toLowerCase() === "installment") {
+    const raw = await showPrompt(
+      "Abhi customer ne kitna diya? (advance / down payment)",
+      "0",
+      { title: "Installment — Total " + fmt(total), type: "number", okText: "Continue" }
+    );
+    if (raw == null) return;
+    advancePaid = Math.max(0, Number(raw) || 0);
+    if (advancePaid > total) advancePaid = total;
+  }
+
+  const sale = {
+    invoiceNo, customerId: custId || null, customerName, customerPhone,
     items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
-    subtotal, discount, total, profit, payment, date: new Date().toISOString() };
+    subtotal, discount, total, profit, payment, date: new Date().toISOString(),
+    advancePaid: (payment || "").toLowerCase() === "installment" ? advancePaid : undefined
+  };
   await DB.put("sales", sale);
   for (const item of cart) {
     const p = products.find((x) => x.id === item.id);
@@ -629,12 +663,35 @@ async function checkout(products, customers) {
     }
   }
   if (cust) {
-    cust.points = Number(cust.points || 0) + Math.floor(total / 1000); // 1 loyalty point per Rs 1000 spent
+    cust.points = Number(cust.points || 0) + Math.floor(total / 1000);
     await DB.put("customers", cust);
   }
+
+  // Auto-create installment plan
+  if ((payment || "").toLowerCase() === "installment") {
+    const itemNames = cart.map((c) => c.name + (c.qty > 1 ? " x" + c.qty : "")).join(", ");
+    const remaining = Math.max(0, total - advancePaid);
+    const inst = {
+      customerName,
+      customerId: custId || null,
+      customerPhone,
+      item: itemNames,
+      invoiceNo,
+      totalAmount: total,
+      paid: advancePaid,
+      remaining,
+      dueDate: todayKey(),
+      status: remaining <= 0 ? "paid" : "active",
+      updatedAt: Date.now()
+    };
+    await DB.put("installments", inst);
+    await logAudit("installment", `Plan ${invoiceNo}: Total ${fmt(total)}, Paid ${fmt(advancePaid)}, Baki ${fmt(remaining)}`);
+    toast(`Installment: Total ${fmt(total)} · Diya ${fmt(advancePaid)} · Baki ${fmt(remaining)}`);
+  }
+
   await logAudit("sale", `Invoice ${invoiceNo} created for ${sale.customerName} — ${fmt(total)}`);
   cart = [];
-  toast("Invoice " + invoiceNo + " created");
+  if ((payment || "").toLowerCase() !== "installment") toast("Invoice " + invoiceNo + " created");
   showInvoice(sale);
 }
 
@@ -1009,22 +1066,140 @@ window.customersOpts = customersOpts;
 const renderCustomers = moduleListPage(customersOpts);
 
 window.showLedger = async (customerId, name) => {
-  const [sales, installments] = await Promise.all([DB.getAll("sales"), DB.getAll("installments")]);
-  const custSales = sales.filter((s) => s.customerId === customerId);
-  const custInst = installments.filter((i) => i.customerName === name);
-  const totalSpent = custSales.reduce((a, s) => a + Number(s.total || 0), 0);
+  const [sales, installments, returnsList] = await Promise.all([
+    DB.getAll("sales"), DB.getAll("installments"), DB.getAll("returns")
+  ]);
+  const nameLower = (name || "").toLowerCase();
+  const custSales = sales.filter((s) =>
+    s.customerId === customerId || (s.customerName || "").toLowerCase() === nameLower
+  );
+  const custInst = installments.filter((i) =>
+    (i.customerId && i.customerId === customerId) ||
+    (i.customerName || "").toLowerCase() === nameLower
+  );
+  const custReturns = returnsList.filter((r) => (r.customerName || "").toLowerCase() === nameLower);
+
+  // Traditional ledger: Sale = Liye, Payments = Diye
+  const txns = [];
+  const saleInvoiceNos = new Set();
+  custSales.forEach((s) => {
+    const pay = (s.payment || "").toLowerCase();
+    const isCredit = pay === "credit" || pay === "installment";
+    saleInvoiceNos.add(String(s.invoiceNo || s.id || "").toLowerCase());
+    txns.push({
+      date: s.date || "",
+      label: "Sale #" + (s.invoiceNo || s.id),
+      amount: -Number(s.total || 0),
+      note: s.payment || ""
+    });
+    if (!isCredit) {
+      txns.push({
+        date: s.date || "",
+        label: "Payment (" + (s.payment || "Cash") + ")",
+        amount: +Number(s.total || 0),
+        note: "#" + (s.invoiceNo || "")
+      });
+    } else if (Number(s.advancePaid || 0) > 0) {
+      txns.push({
+        date: s.date || "",
+        label: "Advance / Down payment",
+        amount: +Number(s.advancePaid),
+        note: "#" + (s.invoiceNo || "")
+      });
+    }
+  });
+  custInst.forEach((i) => {
+    const paid = Number(i.paid || 0);
+    const invKey = String(i.invoiceNo || "").toLowerCase();
+    const linkedToSale = invKey && saleInvoiceNos.has(invKey);
+    if (linkedToSale) {
+      const linkedSale = custSales.find((s) => String(s.invoiceNo || s.id || "").toLowerCase() === invKey);
+      const adv = Number(linkedSale && linkedSale.advancePaid || 0);
+      const extraPaid = Math.max(0, paid - adv);
+      if (extraPaid > 0) {
+        txns.push({
+          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
+          label: "Installment paid — " + (i.item || i.invoiceNo || ""),
+          amount: +extraPaid,
+          note: "Total paid " + fmt(paid) + " / " + fmt(i.totalAmount || 0)
+        });
+      }
+    } else if (Number(i.totalAmount || 0) > 0) {
+      txns.push({
+        date: i.dueDate || (i.updatedAt ? new Date(i.updatedAt).toISOString() : ""),
+        label: "Installment plan — " + (i.item || ""),
+        amount: -Number(i.totalAmount || 0),
+        note: i.status || ""
+      });
+      if (paid > 0) {
+        txns.push({
+          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
+          label: "Installment paid — " + (i.item || ""),
+          amount: +paid,
+          note: "Baki " + fmt(Math.max(0, Number(i.totalAmount || 0) - paid))
+        });
+      }
+    }
+  });
+  custReturns.forEach((r) => {
+    txns.push({
+      date: r.date || "",
+      label: "Return — " + (r.item || r.invoiceNo || ""),
+      amount: +Number(r.amount || 0),
+      note: r.status || ""
+    });
+  });
+  txns.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  let balance = 0;
+  const rows = txns.map((t) => {
+    balance += t.amount;
+    const diye = t.amount > 0 ? fmt(t.amount) : "—";
+    const liye = t.amount < 0 ? fmt(Math.abs(t.amount)) : "—";
+    return `<div class="list-row" style="align-items:flex-start">
+      <div class="l-left" style="flex:1">
+        <div class="l-title">${escapeHtml(t.label)}</div>
+        <div class="l-sub">${(t.date || "").slice(0, 16).replace("T", " ")}${t.note ? " · " + escapeHtml(t.note) : ""}</div>
+      </div>
+      <div style="text-align:right;min-width:120px">
+        <div style="font-size:12px">Diye: <b style="color:var(--green)">${diye}</b></div>
+        <div style="font-size:12px">Liye: <b style="color:var(--red)">${liye}</b></div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const openPlans = custInst.filter((i) => (i.status || "") !== "paid" && Number(i.remaining || 0) > 0);
+  const totalBaki = openPlans.reduce((a, i) => a + Number(i.remaining || 0), 0);
+  const plansHtml = openPlans.length ? `
+    <div class="card" style="margin-bottom:12px;border:1px solid var(--orange)">
+      <div class="l-sub">Open Installments</div>
+      ${openPlans.map((i) => `
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;gap:8px">
+          <span>${escapeHtml(i.item || i.invoiceNo || "")}</span>
+          <span style="text-align:right">
+            <b>Total ${fmt(i.totalAmount)}</b><br/>
+            <span style="color:var(--green)">Diya ${fmt(i.paid || 0)}</span> ·
+            <span style="color:var(--red)">Baki ${fmt(i.remaining)}</span>
+          </span>
+        </div>`).join("")}
+      <div style="margin-top:8px;font-weight:700;color:var(--red)">Kul baki: ${fmt(totalBaki)}</div>
+    </div>` : "";
+
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
   overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">${escapeHtml(name)}'s Ledger</h2>
-    <div class="card">Total Spent: ${fmt(totalSpent)} · ${custSales.length} invoices</div>
-    ${custSales.map((s) => `<div class="list-row">
-      <div class="l-title">Invoice #${escapeHtml(s.invoiceNo)}</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <div class="l-title">${fmt(s.total)}</div>
-        <button class="btn ghost" style="padding:4px 8px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️</button>
-      </div></div>`).join("")}
-    ${custInst.length ? `<div class="section-title" style="padding-left:0">Installments</div>` + custInst.map((i) => `<div class="list-row"><div class="l-title">${escapeHtml(i.item)}</div><div class="l-title">${fmt(i.remaining)} left</div></div>`).join("") : ""}
+    <h2 style="margin-top:0">${escapeHtml(name)} — Ledger</h2>
+    <div class="card" style="margin-bottom:12px">
+      <div class="l-sub">Current Balance</div>
+      <div class="l-title" style="font-size:18px;color:${balance >= 0 ? "var(--green)" : "var(--red)"}">
+        ${balance >= 0
+          ? "Customer ne diye / advance: " + fmt(balance)
+          : "Customer se lena baqi: " + fmt(Math.abs(balance))}
+      </div>
+      <div class="l-sub">${custSales.length} sales · ${custInst.length} installments · ${custReturns.length} returns</div>
+    </div>
+    ${plansHtml}
+    ${rows || `<div class="empty">Koi transaction nahi</div>`}
     <button class="btn full ghost" id="ledger-close" style="margin-top:12px">Close</button>
   </div>`;
   document.body.appendChild(overlay);
@@ -1070,25 +1245,39 @@ const installmentsOpts = {
   fields: [
     { key: "customerName", label: "Customer Name" },
     { key: "item", label: "Item" },
+    { key: "invoiceNo", label: "Invoice # (optional)" },
     { key: "totalAmount", label: "Total Amount", type: "number" },
-    { key: "paid", label: "Amount Paid", type: "number", default: 0 },
+    { key: "paid", label: "Amount Paid (abhi tak)", type: "number", default: 0 },
     { key: "dueDate", label: "Next Due Date", type: "date" },
     { key: "status", label: "Status", type: "select", options: [
       { value: "active", label: "Active" }, { value: "paid", label: "Paid" }, { value: "overdue", label: "Overdue" }
     ] },
   ],
-    beforeSave: (r) => { r.remaining = Number(r.totalAmount || 0) - Number(r.paid || 0); if (r.remaining <= 0) r.status = "paid"; },
-  renderRow: (i) => `<div class="list-row">
+  beforeSave: (r) => {
+    r.remaining = Math.max(0, Number(r.totalAmount || 0) - Number(r.paid || 0));
+    if (r.remaining <= 0) r.status = "paid";
+    else if (!r.status || r.status === "paid") r.status = "active";
+    r.updatedAt = Date.now();
+  },
+  renderRow: (i) => {
+    const total = Number(i.totalAmount || 0);
+    const paid = Number(i.paid || 0);
+    const rem = Number(i.remaining != null ? i.remaining : total - paid);
+    return `<div class="list-row">
     <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("installments","${i.id}", installmentsOpts)'>
       <div class="dot" style="background:var(--blue)">📅</div>
-      <div><div class="l-title">${escapeHtml(i.customerName || "")}</div>
-      <div class="l-sub">${escapeHtml(i.item || "")} · Due ${escapeHtml(i.dueDate || "-")}</div></div>
+      <div>
+        <div class="l-title">${escapeHtml(i.customerName || "")}</div>
+        <div class="l-sub">${escapeHtml(i.item || "")}${i.invoiceNo ? " · #" + escapeHtml(i.invoiceNo) : ""} · Due ${escapeHtml(i.dueDate || "-")}</div>
+        <div class="l-sub" style="margin-top:2px">Total ${fmt(total)} · <span style="color:var(--green)">Diya ${fmt(paid)}</span> · <span style="color:var(--red)">Baki ${fmt(rem)}</span></div>
+      </div>
     </div>
     <div style="text-align:right">
-      <div class="l-title">${fmt(i.remaining)}</div>
-      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status}</span>
+      <div class="l-title" style="color:var(--red)">${fmt(rem)}</div>
+      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status || "active"}</span>
       ${i.status !== "paid" ? `<button class="btn" style="padding:3px 8px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();receiveInstallment("${i.id}")'>💵 Pay</button>` : ""}
-    </div></div>`
+    </div></div>`;
+  }
 };
 window.installmentsOpts = installmentsOpts;
 const renderInstallments = moduleListPage(installmentsOpts);
@@ -1096,16 +1285,20 @@ const renderInstallments = moduleListPage(installmentsOpts);
 window.receiveInstallment = async (id) => {
   const row = await DB.get("installments", id);
   if (!row) return;
-  const rem = Number(row.remaining != null ? row.remaining : (Number(row.totalAmount || 0) - Number(row.paid || 0)));
+  const total = Number(row.totalAmount || 0);
+  const paidSoFar = Number(row.paid || 0);
+  const rem = Number(row.remaining != null ? row.remaining : (total - paidSoFar));
 
   const overlay = document.createElement("div");
   overlay.id = "receive-inst-overlay";
   overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
   overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px">
     <h2 style="margin-top:0">Receive Payment</h2>
-    <div class="l-sub" style="margin-bottom:10px">${escapeHtml(row.customerName || "")} · ${escapeHtml(row.item || "")}<br/>Remaining: ${fmt(rem)}</div>
+    <div class="l-sub" style="margin-bottom:10px">${escapeHtml(row.customerName || "")} · ${escapeHtml(row.item || "")}<br/>
+      Total: ${fmt(total)} · Diya: ${fmt(paidSoFar)} · <b style="color:var(--red)">Baki: ${fmt(rem)}</b>
+    </div>
     <div class="form-row"><label>Amount Received (Rs)</label>
-      <input id="ri-amount" type="number" min="1" max="${rem}" value="${rem}" autofocus />
+      <input id="ri-amount" type="number" min="1" value="${rem}" autofocus />
     </div>
     <button class="btn full" id="ri-save">💵 Receive</button>
     <button class="btn ghost full" id="ri-cancel" style="margin-top:8px">Cancel</button>
@@ -1118,12 +1311,13 @@ window.receiveInstallment = async (id) => {
   overlay.querySelector("#ri-save").onclick = async () => {
     const amt = Number(amountInput.value || 0);
     if (!(amt > 0)) { toast("Invalid amount"); return; }
-    row.paid = Number(row.paid || 0) + amt;
-    row.remaining = Math.max(0, Number(row.totalAmount || 0) - row.paid);
+    row.paid = paidSoFar + amt;
+    row.remaining = Math.max(0, total - row.paid);
     if (row.remaining <= 0) row.status = "paid";
+    row.updatedAt = Date.now();
     await DB.put("installments", row);
-    await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || ""));
-    toast("Received " + fmt(amt));
+    await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || "") + " · Baki " + fmt(row.remaining));
+    toast(`Received ${fmt(amt)} · Total ${fmt(total)} · Diya ${fmt(row.paid)} · Baki ${fmt(row.remaining)}`);
     overlay.remove();
     askShowInstallmentReceipt(row, amt);
   };
