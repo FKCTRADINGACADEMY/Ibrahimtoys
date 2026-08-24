@@ -30,7 +30,25 @@
   if (window.CFG && CFG.shopName) document.title = CFG.shopName;
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("service-worker.js").catch(console.warn);
+      navigator.serviceWorker.register("./service-worker.js").then((reg) => {
+        if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        reg.addEventListener("updatefound", () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener("statechange", () => {
+            if (nw.state === "installed" && navigator.serviceWorker.controller) {
+              nw.postMessage({ type: "SKIP_WAITING" });
+            }
+          });
+        });
+      }).catch(console.warn);
+
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
     });
   }
 </script>

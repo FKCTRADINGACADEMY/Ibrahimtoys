@@ -1,5 +1,6 @@
-/* Minimal service worker — cache shell for offline */
-const CACHE = "sm-shell-v14";
+/* Service worker — offline shell + auto-update for clients */
+// ⚠️ Har baar app.js / CSS change pe version BADLO (v14 → v15 → v16 ...)
+const CACHE = "sm-shell-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -13,7 +14,13 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {
@@ -26,19 +33,43 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // Network-first for API / Firebase; cache-first for same-origin shell
-  if (url.origin === self.location.origin) {
+  if (url.origin !== self.location.origin) return;
+
+  const path = url.pathname;
+  const networkFirst =
+    path.endsWith(".js") ||
+    path.endsWith(".html") ||
+    path.endsWith("/") ||
+    path.endsWith("service-worker.js") ||
+    path.endsWith("sw.js");
+
+  if (networkFirst) {
     e.respondWith(
-      caches.match(e.request).then((cached) => {
-        const fetched = fetch(e.request).then((res) => {
+      fetch(e.request)
+        .then((res) => {
           if (res && res.ok && e.request.method === "GET") {
             const clone = res.clone();
             caches.open(CACHE).then((c) => c.put(e.request, clone));
           }
           return res;
-        }).catch(() => cached);
-        return cached || fetched;
-      })
+        })
+        .catch(() => caches.match(e.request))
     );
+    return;
   }
+
+  e.respondWith(
+    caches.match(e.request).then((cached) => {
+      const fetched = fetch(e.request)
+        .then((res) => {
+          if (res && res.ok && e.request.method === "GET") {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, clone));
+          }
+          return res;
+        })
+        .catch(() => cached);
+      return cached || fetched;
+    })
+  );
 });
