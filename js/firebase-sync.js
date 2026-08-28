@@ -1,4 +1,4 @@
-/* firebase-sync.js — CFG-based (Sheraz / any shop) + push-first fullResync
+/* firebase-sync.js — CFG-based cloud sync (works for any shop) + push-first fullResync
    Firebase keys + shop path: js/config.js → window.CFG
 */
 function getFirebaseConfig() {
@@ -255,7 +255,7 @@ window.SMSync = {
 
 function openDBForSync() {
   return new Promise((resolve, reject) => {
-    // same DB name as db.js (change if Sheraz uses different)
+    // must match the DB name used in db.js
     const req = indexedDB.open("sm-app-v2", 3);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

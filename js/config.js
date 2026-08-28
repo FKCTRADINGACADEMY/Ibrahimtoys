@@ -17,15 +17,14 @@ window.CFG = {
   currency: "PKR",
   currencySymbol: "Rs.",
 
-  // Firebase project config — replace with YOUR project's values.
-  // Firebase Console > Project settings > General > Your apps > SDK setup
+  // Firebase project config (ibrahimtoys Firebase project)
   firebase: {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "YOUR_SENDER_ID",
-    appId: "YOUR_APP_ID"
+    apiKey: "AIzaSyCiZlQNNahbM8dMg5KlS_WDOL0x0NTZiCs",
+    authDomain: "sheeraz-apple-point.firebaseapp.com",
+    projectId: "sheeraz-apple-point",
+    storageBucket: "sheeraz-apple-point.firebasestorage.app",
+    messagingSenderId: "786751552575",
+    appId: "1:786751552575:web:3cea064213b5e8e9180c8a"
   },
 
   // Cloud data path — har shop ka data isolate rehta hai is path ke neeche.
