@@ -1,52 +1,53 @@
-/* db.js — IndexedDB offline-first layer for Sanaullah Mobile Communication
-   Stores: products, customers, sales, repairs, installments, suppliers,
-           expenses, staff, settings, purchaseOrders, auditLogs, attendance
-   + _syncQueue for offline pending writes
-*/
+/* =========================================================================
+   js/db.js — local-first storage (IndexedDB)
+   All app data lives here first. firebase-sync.js reads the "syncQueue"
+   store to push changes to the cloud, and writes incoming cloud changes
+   straight into these same object stores.
+   ========================================================================= */
 
 const DB_NAME = "sm-app-v2";
 const DB_VERSION = 3;
-const STORES = [
+
+const DATA_STORES = [
   "products", "customers", "sales", "repairs", "installments",
-  "suppliers", "expenses", "staff", "settings", "purchaseOrders",
-  "auditLogs", "attendance", "returns", "_syncQueue"
+  "suppliers", "expenses", "staff", "purchaseOrders", "auditLogs",
+  "attendance", "returns"
 ];
 
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-}
+let _dbPromise = null;
 
 function openDB() {
-  return new Promise((resolve, reject) => {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      for (const name of STORES) {
-        if (!db.objectStoreNames.contains(name)) {
-          const store = db.createObjectStore(name, { keyPath: "id" });
-          if (name !== "settings" && name !== "_syncQueue") {
-            store.createIndex("updatedAt", "updatedAt", { unique: false });
-          }
+      const db = req.result;
+      for (const store of DATA_STORES) {
+        if (!db.objectStoreNames.contains(store)) {
+          db.createObjectStore(store, { keyPath: "id" });
         }
+      }
+      if (!db.objectStoreNames.contains("syncQueue")) {
+        db.createObjectStore("syncQueue", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("meta")) {
+        db.createObjectStore("meta", { keyPath: "key" });
       }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+  return _dbPromise;
 }
 
-async function withStore(storeName, mode, fn) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, mode);
-    const store = tx.objectStore(storeName);
-    const result = fn(store);
-    tx.oncomplete = () => resolve(result);
-    tx.onerror = () => reject(tx.error);
-    if (result && typeof result.then === "function") {
-      // already a promise from request wrapper
-    }
-  });
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+function tx(db, store, mode) {
+  const t = db.transaction(store, mode);
+  return t.objectStore(store);
 }
 
 function reqToPromise(req) {
@@ -56,117 +57,85 @@ function reqToPromise(req) {
   });
 }
 
-const DB = {
-  async getAll(storeName) {
+window.DB = {
+  uuid,
+
+  async get(store, id) {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readonly");
-      const req = tx.objectStore(storeName).getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
+    return reqToPromise(tx(db, store, "readonly").get(id));
   },
 
-  async get(storeName, id) {
-    if (id == null) return null;
+  async getAll(store) {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readonly");
-      const req = tx.objectStore(storeName).get(id);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
+    return reqToPromise(tx(db, store, "readonly").getAll());
   },
 
-  async put(storeName, record) {
-    if (!record || typeof record !== "object") throw new Error("Invalid record");
-    const rec = { ...record };
-    if (!rec.id) rec.id = uid();
-    rec.updatedAt = Date.now();
-    if (!rec.createdAt) rec.createdAt = rec.updatedAt;
-
+  /** Insert or update a record. Assigns id/updatedAt if missing and queues
+   *  the change for cloud sync (unless queue=false, used for incoming
+   *  cloud data so we don't re-queue it right back to the cloud). */
+  async put(store, record, { queue = true } = {}) {
     const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      tx.objectStore(storeName).put(rec);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-
-    // Queue for cloud sync — skip session + pure local noise
-    if (storeName !== "_syncQueue" && !(storeName === "settings" && rec.id === "session")) {
-      await this._enqueue("put", storeName, rec);
-    }
-    return rec;
+    if (!record.id) record.id = uuid();
+    record.updatedAt = Date.now();
+    await reqToPromise(tx(db, store, "readwrite").put(record));
+    if (queue) await this._enqueue(store, "put", record);
+    window.dispatchEvent(new CustomEvent("sm:localchange", { detail: { store } }));
+    return record;
   },
 
-  async remove(storeName, id) {
+  async remove(store, id, { queue = true } = {}) {
     const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, "readwrite");
-      tx.objectStore(storeName).delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    if (storeName !== "_syncQueue") {
-      await this._enqueue("delete", storeName, { id });
-    }
+    await reqToPromise(tx(db, store, "readwrite").delete(id));
+    if (queue) await this._enqueue(store, "delete", { id });
+    window.dispatchEvent(new CustomEvent("sm:localchange", { detail: { store } }));
   },
 
-  async _enqueue(op, storeName, data) {
-    const item = {
-      id: uid(),
-      op,
-      store: storeName,
-      data,
-      ts: Date.now()
-    };
+  async _enqueue(store, op, data) {
     const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("_syncQueue", "readwrite");
-      tx.objectStore("_syncQueue").put(item);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    window.dispatchEvent(new CustomEvent("sm:queued"));
-    // Fast sync: immediate + short retry
-    if (navigator.onLine && window.SMSync && window.SMSync.isReady()) {
-      window.SMSync.flushQueue().catch(console.warn);
-      setTimeout(() => {
-        if (window.SMSync && window.SMSync.isReady())
-          window.SMSync.flushQueue().catch(() => {});
-      }, 400);
-    }
-  },
-
-  async pendingSyncCount() {
-    const items = await this.getAll("_syncQueue");
-    return items.length;
-  },
-
-  async clearSyncQueue() {
-    const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("_syncQueue", "readwrite");
-      tx.objectStore("_syncQueue").clear();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await reqToPromise(
+      tx(db, "syncQueue", "readwrite").add({ store, op, data, ts: Date.now() })
+    );
   },
 
   async getSyncQueue() {
-    return this.getAll("_syncQueue");
+    const db = await openDB();
+    return reqToPromise(tx(db, "syncQueue", "readonly").getAll());
   },
 
   async removeFromQueue(id) {
     const db = await openDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction("_syncQueue", "readwrite");
-      tx.objectStore("_syncQueue").delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    return reqToPromise(tx(db, "syncQueue", "readwrite").delete(id));
+  },
+
+  async clearSyncQueue() {
+    const db = await openDB();
+    return reqToPromise(tx(db, "syncQueue", "readwrite").clear());
+  },
+
+  async setMeta(key, value) {
+    const db = await openDB();
+    return reqToPromise(tx(db, "meta", "readwrite").put({ key, value }));
+  },
+
+  async getMeta(key, fallback = null) {
+    const db = await openDB();
+    const rec = await reqToPromise(tx(db, "meta", "readonly").get(key));
+    return rec ? rec.value : fallback;
+  },
+
+  /** Export everything (for backup / moving to a new device). */
+  async exportAll() {
+    const out = {};
+    for (const store of DATA_STORES) out[store] = await this.getAll(store);
+    return out;
+  },
+
+  /** Import a previously exported backup. Overwrites matching ids. */
+  async importAll(payload) {
+    for (const store of DATA_STORES) {
+      const rows = payload[store];
+      if (!Array.isArray(rows)) continue;
+      for (const rec of rows) await this.put(store, rec);
+    }
   }
 };
-
-window.DB = DB;

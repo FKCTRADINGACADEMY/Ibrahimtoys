@@ -1,1913 +1,1287 @@
-/* app.js — SPA shell: hash routing + render functions for every module.
-   All data reads/writes go through window.DB (IndexedDB, offline-first). */
+/* =========================================================================
+   js/app.js — Ibrahim Toy & Costomestic Shop · POS + Inventory + Reports
+   ========================================================================= */
 
-const root = document.getElementById("app");
-const state = { user: null, theme: localStorage.getItem("sm_theme") || "light" };
-document.documentElement.setAttribute("data-theme", state.theme);
+const App = {
+  user: null,
+  cart: [],           // active POS cart: {productId,name,price,cost,qty,stock}
+  editingReturnFor: null,
+  reportRange: "today",
+  reportFrom: null,
+  reportTo: null,
+  productFilter: "",
+  categoryFilter: "",
+};
 
-const fmt = (n) => "Rs " + Number(n || 0).toLocaleString("en-PK");
-const todayKey = () => new Date().toISOString().slice(0, 10);
-const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* ---------------------------------------------------------------------- */
+/* Helpers                                                                 */
+/* ---------------------------------------------------------------------- */
 
-function toast(msg) {
+function money(n) {
+  const sym = (window.CFG && CFG.currencySymbol) || "";
+  return sym + " " + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString("en-PK");
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function uid() { return DB.uuid(); }
+function todayKey(ts) { return new Date(ts).toISOString().slice(0, 10); }
+function fmtDate(ts) { return new Date(ts).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" }); }
+function fmtDateOnly(ts) { return new Date(ts).toLocaleDateString("en-PK", { dateStyle: "medium" }); }
+function $(sel, root = document) { return root.querySelector(sel); }
+function $all(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+
+function toast(msg, kind = "ok") {
+  let box = $("#toastBox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toastBox";
+    document.body.appendChild(box);
+  }
   const t = document.createElement("div");
-  t.className = "toast";
+  t.className = "toast toast-" + kind;
   t.textContent = msg;
-  document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2200);
+  box.appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 250); }, 2600);
 }
 
-// ---------- Reusable in-app dialogs (replace native alert/confirm/prompt everywhere) ----------
-function showConfirm(message, opts = {}) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
-    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:400px;border-radius:16px;padding:18px">
-      ${opts.title ? `<div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(opts.title)}</div>` : ""}
-      <div class="l-sub" style="margin-bottom:16px;white-space:pre-wrap">${escapeHtml(message)}</div>
-      <div style="display:flex;gap:10px">
-        <button class="btn ghost full" id="gc-cancel">${escapeHtml(opts.cancelText || "Cancel")}</button>
-        <button class="btn ${opts.danger ? "danger" : ""} full" id="gc-ok">${escapeHtml(opts.okText || "OK")}</button>
-      </div>
-    </div>`;
-    document.body.appendChild(overlay);
-    overlay.querySelector("#gc-cancel").onclick = () => { overlay.remove(); resolve(false); };
-    overlay.querySelector("#gc-ok").onclick = () => { overlay.remove(); resolve(true); };
-  });
+function openModal(innerHtml, wide = false) {
+  closeModal();
+  const overlay = document.createElement("div");
+  overlay.id = "modalOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal-card ${wide ? "modal-wide" : ""}">${innerHtml}</div>`;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  document.body.appendChild(overlay);
 }
-function showAlert(message, opts = {}) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px";
-    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:420px;border-radius:16px;padding:18px;max-height:80vh;overflow:auto">
-      ${opts.title ? `<div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(opts.title)}</div>` : ""}
-      <div class="l-sub" style="margin-bottom:16px;white-space:pre-wrap">${escapeHtml(message)}</div>
-      <button class="btn full" id="ga-ok">${escapeHtml(opts.okText || "OK")}</button>
-    </div>`;
-    document.body.appendChild(overlay);
-    overlay.querySelector("#ga-ok").onclick = () => { overlay.remove(); resolve(); };
-  });
-}
-function showPrompt(label, defaultValue = "", opts = {}) {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:flex-end";
-    overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px">
-      ${opts.title ? `<h2 style="margin-top:0">${escapeHtml(opts.title)}</h2>` : ""}
-      <div class="form-row"><label>${escapeHtml(label)}</label>
-        <input id="gp-input" type="${opts.type || "text"}" value="${escapeHtml(defaultValue)}" />
-      </div>
-      <button class="btn full" id="gp-ok">${escapeHtml(opts.okText || "OK")}</button>
-      <button class="btn ghost full" id="gp-cancel" style="margin-top:8px">Cancel</button>
-    </div>`;
-    document.body.appendChild(overlay);
-    const input = overlay.querySelector("#gp-input");
-    setTimeout(() => { input.focus(); input.select(); }, 50);
-    const submit = () => { const v = input.value; overlay.remove(); resolve(v); };
-    overlay.querySelector("#gp-cancel").onclick = () => { overlay.remove(); resolve(null); };
-    overlay.querySelector("#gp-ok").onclick = submit;
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
-  });
-}
-
-// ---------- Routing ----------
-const routes = {
-  "": () => renderDashboard(),
-  "dashboard": () => renderDashboard(),
-  "pos": () => renderPOS(),
-  "sales": () => renderSalesList(),
-  "products": () => renderProducts(),
-  "customers": () => renderCustomers(),
-  "repairs": () => renderRepairs(),
-  "installments": () => renderInstallments(),
-  "suppliers": () => renderSuppliers(),
-  "expenses": () => renderExpenses(),
-  "reports": () => renderReports(),
-  "settings": () => renderSettings(),
-  "staff": () => renderStaff(),
-  "purchase-orders": () => renderPurchaseOrders(),
-  "cashbook": () => renderCashbook(),
-  "audit-logs": () => renderAuditLogs(),
-  "returns": () => renderReturns(),
-};
-
-function can(feature) {
-  const role = state.user && state.user.role;
-  if (role === "admin" || !role) return true;
-  const managerAllowed = ["dashboard", "pos", "products", "customers", "installments", "repairs", "suppliers", "expenses", "reports", "returns", "settings", "purchase-orders", "cashbook"];
-  const cashierAllowed = ["dashboard", "pos", "products", "customers", "installments", "reports", "returns", "settings"];
-  const techAllowed = ["dashboard", "repairs", "settings"];
-  if (role === "manager") return managerAllowed.includes(feature);
-  if (role === "cashier") return cashierAllowed.includes(feature);
-  if (role === "technician") return techAllowed.includes(feature);
-  return true;
-}
-
-// Simple i18n
-const i18n = {
-  en: {
-    dashboard: "Dashboard", sales: "Sales", products: "Products", reports: "Reports", settings: "Settings",
-    pos: "POS / Billing", checkout: "Checkout", cartEmpty: "Cart is empty"
-  },
-  ur: {
-    dashboard: "ڈیش بورڈ", sales: "فروخت", products: "پروڈکٹس", reports: "رپورٹس", settings: "ترتیبات",
-    pos: "بلنگ", checkout: "چیک آؤٹ", cartEmpty: "کارٹ خالی ہے"
-  }
-};
-function t(key) {
-  const lang = localStorage.getItem("sm_lang") || "en";
-  return (i18n[lang] && i18n[lang][key]) || (i18n.en[key] || key);
-}
-
-async function router() {
-  if (!state.user) { renderLogin(); return; }
-  const hash = location.hash.replace("#/", "").split("?")[0];
-  if (!can(hash)) { location.hash = "#/dashboard"; return; }
-  const fn = routes[hash] || renderDashboard;
-  root.innerHTML = `<div id="page-slot"></div>`;
-  await fn();
-}
-window.addEventListener("hashchange", router);
-
-// ---------- Login ----------
-// Firebase Auth only — no demo user. Offline: restored session works after first online login.
-function renderLogin() {
-  const fbReady = window.SMSync && window.SMSync.isConfigured();
-  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
-  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
-  root.innerHTML = `
-  <div class="login-screen">
-    <img src="icons/icon-512.png" class="login-logo" alt="logo" onerror="this.style.display='none'" />
-    <div class="login-title">${escapeHtml(shopName)}</div>
-    <div class="login-sub">${escapeHtml(shopSub)}</div>
-    <div class="field"><input id="li-user" type="email" placeholder="Email" autocomplete="username" /></div>
-    <div class="field"><input id="li-pass" type="password" placeholder="Password" autocomplete="current-password" /></div>
-    <div id="li-error" style="color:#f87171;font-size:12px;margin:-4px 0 10px;display:none"></div>
-    <button class="btn-primary" id="li-btn">LOGIN</button>
-    <div style="color:var(--muted);font-size:12px;margin-top:14px">${fbReady ? (navigator.onLine ? "🟢 Online · Firebase Auth" : "🟠 Offline · pehle se login session chalega") : "⚠️ Firebase config missing"}</div>
-    <div style="color:var(--muted);font-size:10px;margin-top:18px">${escapeHtml(window.creditFooter ? creditFooter() : "")}</div>
-  </div>`;
-  document.getElementById("li-btn").onclick = doLogin;
-  document.getElementById("li-pass").onkeydown = (e) => { if (e.key === "Enter") doLogin(); };
-}
-
-async function doLogin() {
-  const u = document.getElementById("li-user").value.trim();
-  const p = document.getElementById("li-pass").value.trim();
-  const err = document.getElementById("li-error");
-  err.style.display = "none";
-
-  if (!u || !p) {
-    err.textContent = "Email aur password likho.";
-    err.style.display = "block";
-    return;
-  }
-  if (!u.includes("@")) {
-    err.textContent = "Valid email address use karo.";
-    err.style.display = "block";
-    return;
-  }
-  if (!window.SMSync || !window.SMSync.isConfigured()) {
-    err.textContent = "Firebase configured nahi hai.";
-    err.style.display = "block";
-    return;
-  }
-  if (!window.SMSync.isReady()) {
-    // wait briefly for SDK init
-    await new Promise((r) => setTimeout(r, 800));
-  }
-  if (!window.SMSync.isReady()) {
-    err.textContent = "Firebase ready nahi. Internet check karo.";
-    err.style.display = "block";
-    return;
-  }
-
-  try {
-    const user = await SMSync.signIn(u, p);
-    state.user = {
-      name: user.displayName || u.split("@")[0],
-      role: "admin",
-      email: u,
-      firebase: true,
-      uid: user.uid
-    };
-    await DB.put("settings", { id: "session", user: state.user });
-    await logAudit("login", state.user.name + " logged in");
-    try {
-      await SMSync.clearPending();
-      await SMSync.pullAll();
-    } catch (e) { console.warn(e); }
-    location.hash = "#/dashboard";
-    router();
-  } catch (e) {
-    const code = e.code || "";
-    let msg = e.message || "Login failed";
-    if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
-      msg = "Email ya password ghalat hai.";
-    } else if (code === "auth/network-request-failed" || !navigator.onLine) {
-      msg = "Internet nahi. Offline me sirf pehle wala session chalega.";
-    } else if (code === "auth/too-many-requests") {
-      msg = "Bohat attempts. Thodi der baad try karo.";
-    } else if (code === "auth/invalid-email") {
-      msg = "Email format ghalat hai.";
-    }
-    err.textContent = msg;
-    err.style.display = "block";
-  }
+function closeModal() {
+  const m = $("#modalOverlay");
+  if (m) m.remove();
 }
 
 async function logAudit(action, detail) {
-  await DB.put("auditLogs", { action, detail, by: state.user ? state.user.name : "system", ts: new Date().toISOString() });
+  try {
+    await DB.put("auditLogs", {
+      id: uid(), action, detail, user: (App.user && (App.user.email || App.user.name)) || "unknown",
+      date: Date.now()
+    });
+  } catch (e) { /* non-fatal */ }
 }
 
-async function tryRestoreSession() {
-  // 1) Local session (works offline after first login)
-  const s = await DB.get("settings", "session");
-  if (s && s.user) state.user = s.user;
+/* ---------------------------------------------------------------------- */
+/* Local (offline) auth fallback — used when Firebase isn't configured     */
+/* ---------------------------------------------------------------------- */
 
-  // 2) If Firebase Auth still has a user (persisted), prefer that
-  if (window.SMSync && window.SMSync.isReady()) {
-    const fu = SMSync.currentUser();
-    if (fu) {
-      state.user = {
-        name: fu.displayName || (fu.email || "").split("@")[0] || "User",
-        role: (state.user && state.user.role) || "admin",
-        email: fu.email,
-        firebase: true,
-        uid: fu.uid
-      };
-      await DB.put("settings", { id: "session", user: state.user });
-    }
+function simpleHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
+  return "h" + h;
+}
+
+async function ensureLocalAdmin() {
+  const existing = await DB.getMeta("localAuthUsers");
+  if (!existing) {
+    await DB.setMeta("localAuthUsers", [
+      { username: "admin", passHash: simpleHash("admin123"), name: "Admin" }
+    ]);
   }
 }
 
-// ---------- Shell (topbar + bottomnav) wrapper ----------
-function shell(activeTab, innerHtml) {
-  const pending = window._pendingCount || 0;
-  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
-  return `
-  <div class="topbar">
-    <div>
-      <div class="greet">Assalamualaikum, ${escapeHtml(state.user.name)} 👋</div>
-      <h1>${escapeHtml(shopName)}</h1>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button class="icon-btn" onclick="location.hash='#/settings'">⚙️</button>
-    </div>
-  </div>
-  <div class="sync-status">${navigator.onLine ? "🟢 Online" : "🟠 Offline"} ${pending ? "· " + pending + " pending sync" : "· synced"} · ${escapeHtml(state.user.role || "admin")}</div>
-  ${innerHtml}
-  <div class="bottomnav">
-    ${can("dashboard") ? navBtn("dashboard", "🏠", "Dashboard", activeTab) : ""}
-    ${can("pos") ? navBtn("pos", "🛒", "Sales", activeTab) : ""}
-    ${can("products") ? navBtn("products", "📦", "Products", activeTab) : ""}
-    ${can("repairs") && state.user.role === "technician" ? navBtn("repairs", "🔧", "Repairs", activeTab) : ""}
-    ${can("reports") ? navBtn("reports", "📊", "Reports", activeTab) : ""}
-    ${navBtn("settings", "⚙️", "Settings", activeTab)}
-  </div>`;
-}
-function navBtn(route, icon, label, active) {
-  return `<button class="nav-item ${active === route ? "active" : ""}" onclick="location.hash='#/${route}'">
-    <span>${icon}</span><span>${label}</span></button>`;
+async function localSignIn(username, password) {
+  const users = (await DB.getMeta("localAuthUsers")) || [];
+  const u = users.find(x => x.username.toLowerCase() === String(username).trim().toLowerCase());
+  if (!u || u.passHash !== simpleHash(password)) throw new Error("Ghalat email/password.");
+  return { local: true, name: u.name || u.username, email: u.username };
 }
 
-// ---------- Dashboard ----------
-async function renderDashboard() {
-  const [sales, repairs, installments, products, returnsList, customers] = await Promise.all([
-    DB.getAll("sales"), DB.getAll("repairs"), DB.getAll("installments"),
-    DB.getAll("products"), DB.getAll("returns"), DB.getAll("customers")
-  ]);
-  const today = todayKey();
-  const todaySales = sales.filter((s) => (s.date || "").slice(0, 10) === today);
-  const todayTotal = todaySales.reduce((a, s) => a + Number(s.total || 0), 0);
-  const todayProfit = todaySales.reduce((a, s) => a + Number(s.profit || 0), 0);
-  const outStock = products.filter((p) => Number(p.qty) <= 0);
-  const lowStock = products.filter((p) => {
-    const q = Number(p.qty);
-    const rl = Number(p.reorderLevel || 5);
-    return q > 0 && q <= rl;
-  });
-  const stockAlert = outStock.length + lowStock.length;
-  const dueInstallments = installments.filter((i) => i.status !== "paid");
-  const dueTotal = dueInstallments.reduce((a, i) => a + Number(i.remaining || 0), 0);
-  const openRepairs = repairs.filter((r) => r.status !== "delivered");
-  const recent = [...sales].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 6);
+async function localSignUp(username, password, name) {
+  const users = (await DB.getMeta("localAuthUsers")) || [];
+  if (users.find(x => x.username.toLowerCase() === String(username).trim().toLowerCase())) {
+    throw new Error("Ye account pehle se maujood hai.");
+  }
+  users.push({ username: username.trim(), passHash: simpleHash(password), name: name || username });
+  await DB.setMeta("localAuthUsers", users);
+  return { local: true, name: name || username, email: username };
+}
 
-  const html = `
-  <div class="stat-grid">
-    <div class="stat-card stat-blue stat-tap" onclick="location.hash='#/sales'">
-      <div class="label">Today's Sales</div>
-      <div class="value">${fmt(todayTotal)}</div>
-      <div class="delta">${todaySales.length} invoices · tap to open</div>
-    </div>
-    <div class="stat-card stat-green stat-tap" onclick="location.hash='#/reports'">
-      <div class="label">Today's Profit</div>
-      <div class="value">${fmt(todayProfit)}</div>
-      <div class="delta">Reports · tap</div>
-    </div>
-    <div class="stat-card stat-purple stat-tap" onclick="location.hash='#/products'">
-      <div class="label">Products</div>
-      <div class="value">${products.length}</div>
-      <div class="delta">Stock list · tap</div>
-    </div>
-    <div class="stat-card stat-purple stat-tap" onclick="location.hash='#/customers'">
-      <div class="label">Customers</div>
-      <div class="value">${customers.length}</div>
-      <div class="delta">Total customers · tap</div>
-    </div>
-    <div class="stat-card stat-orange stat-tap" onclick="location.hash='#/products'">
-      <div class="label">Stock Alert</div>
-      <div class="value">${stockAlert}</div>
-      <div class="delta">${outStock.length} out · ${lowStock.length} low · tap</div>
-    </div>
-  </div>
+/* ---------------------------------------------------------------------- */
+/* Business logic                                                          */
+/* ---------------------------------------------------------------------- */
 
-  <div class="dash-pills">
-    <button class="dash-pill" onclick="location.hash='#/installments'">📅 Due ${fmt(dueTotal)} · ${dueInstallments.length}</button>
-    <button class="dash-pill" onclick="location.hash='#/repairs'">🔧 Repairs ${openRepairs.length}</button>
-    <button class="dash-pill" onclick="location.hash='#/returns'">↩️ Returns ${returnsList.length}</button>
-  </div>
+async function getProducts() { return (await DB.getAll("products")).sort((a, b) => a.name.localeCompare(b.name)); }
+async function getSuppliers() { return (await DB.getAll("suppliers")).sort((a, b) => a.name.localeCompare(b.name)); }
+async function getCustomers() { return (await DB.getAll("customers")).sort((a, b) => a.name.localeCompare(b.name)); }
+async function getSales() { return (await DB.getAll("sales")).sort((a, b) => b.date - a.date); }
+async function getExpenses() { return (await DB.getAll("expenses")).sort((a, b) => b.date - a.date); }
+async function getPurchases() { return (await DB.getAll("purchaseOrders")).sort((a, b) => b.date - a.date); }
 
-  <div class="section-title">Quick Actions</div>
-  <div class="qa-grid qa-modern">
-    ${qa("pos", "🛒", "POS", "var(--blue)")}
-    ${qa("sales", "🧾", "Invoices", "#0ea5e9")}
-    ${qa("products", "📦", "Products", "var(--purple)")}
-    ${qa("customers", "👥", "Customers", "#8b5cf6")}
-    ${qa("repairs", "🔧", "Repairs", "var(--orange)")}
-    ${qa("installments", "📅", "Installments", "#06b6d4")}
-    ${qa("returns", "↩️", "Returns", "#f59e0b")}
-    ${qa("suppliers", "🚚", "Suppliers", "var(--red)")}
-    ${qa("expenses", "💰", "Expenses", "#10b981")}
-    ${qa("reports", "📈", "Reports", "#6366f1")}
-    ${qa("settings", "⚙️", "Settings", "var(--muted)")}
-  </div>
+function lowStockThreshold(p) {
+  return Number.isFinite(p.lowStockAt) ? p.lowStockAt : ((window.CFG && CFG.defaultLowStockThreshold) || 5);
+}
 
-  <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
-    <span>Recent Invoices</span>
-    <a href="#/sales" style="color:var(--blue);font-size:12px;font-weight:600">View All →</a>
-  </div>
-  ${recent.length ? recent.map((s) => `
-    <div class="list-row dash-sale-row">
-      <div class="l-left" style="flex:1;cursor:pointer" onclick='reprintInvoice("${s.id}")'>
-        <div class="dot" style="background:linear-gradient(135deg,#2563eb,#7c3aed)">🧾</div>
-        <div>
-          <div class="l-title">#${escapeHtml(s.invoiceNo || s.id)}</div>
-          <div class="l-sub">${escapeHtml(s.customerName || "Walk-in")} · ${(s.date || "").slice(0, 16).replace("T", " ")}</div>
+function rangeBounds() {
+  const now = new Date();
+  let from, to;
+  if (App.reportRange === "today") {
+    from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    to = from + 86400000;
+  } else if (App.reportRange === "week") {
+    const day = now.getDay();
+    const start = new Date(now); start.setDate(now.getDate() - day); start.setHours(0, 0, 0, 0);
+    from = start.getTime(); to = from + 7 * 86400000;
+  } else if (App.reportRange === "month") {
+    from = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    to = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+  } else {
+    from = App.reportFrom ? new Date(App.reportFrom).getTime() : 0;
+    to = App.reportTo ? new Date(App.reportTo).getTime() + 86400000 : Date.now() + 86400000;
+  }
+  return { from, to };
+}
+
+async function computeReport() {
+  const { from, to } = rangeBounds();
+  const sales = (await getSales()).filter(s => s.date >= from && s.date < to && !s.returned);
+  const expenses = (await getExpenses()).filter(e => e.date >= from && e.date < to);
+  const products = await getProducts();
+
+  let revenue = 0, cogs = 0, discountTotal = 0;
+  const soldCount = {};
+  for (const s of sales) {
+    revenue += s.total;
+    discountTotal += s.discount || 0;
+    for (const it of s.items) {
+      cogs += (it.cost || 0) * it.qty;
+      soldCount[it.name] = (soldCount[it.name] || 0) + it.qty;
+    }
+  }
+  const expenseTotal = expenses.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const grossProfit = revenue - cogs;
+  const netProfit = grossProfit - expenseTotal;
+
+  const stockCostValue = products.reduce((a, p) => a + (p.costPrice || 0) * (p.stock || 0), 0);
+  const stockRetailValue = products.reduce((a, p) => a + (p.sellPrice || 0) * (p.stock || 0), 0);
+
+  const topSelling = Object.entries(soldCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  return { sales, expenses, revenue, cogs, discountTotal, expenseTotal, grossProfit, netProfit, stockCostValue, stockRetailValue, topSelling };
+}
+
+async function last7DaysSales() {
+  const sales = await getSales();
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+    const key = todayKey(d.getTime());
+    const total = sales.filter(s => !s.returned && todayKey(s.date) === key).reduce((a, s) => a + s.total, 0);
+    days.push({ label: d.toLocaleDateString("en-PK", { weekday: "short" }), total });
+  }
+  return days;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Rendering shell                                                         */
+/* ---------------------------------------------------------------------- */
+
+function appRoot() { return document.getElementById("app"); }
+
+async function render() {
+  if (!App.user) return renderLogin();
+  const hash = location.hash.replace("#/", "") || "dashboard";
+  const [route] = hash.split("?");
+  const routes = {
+    dashboard: renderDashboard,
+    pos: renderPOS,
+    purchase: renderPurchase,
+    products: renderProducts,
+    suppliers: renderSuppliers,
+    customers: renderCustomers,
+    expenses: renderExpenses,
+    reports: renderReports,
+    settings: renderSettings,
+  };
+  const fn = routes[route] || renderDashboard;
+  await renderShell(route);
+  await fn();
+}
+
+async function renderShell(activeRoute) {
+  const cfg = window.CFG || {};
+  const syncOn = window.SMSync && SMSync.isConfigured();
+  appRoot().innerHTML = `
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img src="${esc(cfg.shopLogo || "assets/logo.png")}" alt="logo" class="brand-logo" onerror="this.style.display='none'"/>
+          <div class="brand-text">
+            <div class="brand-name">${esc(cfg.shopName || "Shop")}</div>
+            <div class="brand-tag">${esc(cfg.shopTagline || "")}</div>
+          </div>
         </div>
+        <nav class="navlinks">
+          ${navLink("dashboard", "🏠", "Dashboard", activeRoute)}
+          ${navLink("pos", "🧾", "Sell (POS)", activeRoute)}
+          ${navLink("purchase", "📦", "Stock In (Wholesale)", activeRoute)}
+          ${navLink("products", "🧸", "Products", activeRoute)}
+          ${navLink("suppliers", "🚚", "Suppliers", activeRoute)}
+          ${navLink("customers", "👤", "Customers", activeRoute)}
+          ${navLink("expenses", "💸", "Expenses", activeRoute)}
+          ${navLink("reports", "📊", "Reports / Profit", activeRoute)}
+          ${navLink("settings", "⚙️", "Settings", activeRoute)}
+        </nav>
+        <div class="sidebar-footer">
+          <div class="sync-pill ${syncOn ? "on" : "off"}" data-action="sync-now" title="Tap to sync now">
+            <span class="dot"></span> ${syncOn ? "Cloud sync on" : "Offline mode"}
+          </div>
+          <button class="btn btn-ghost btn-block" data-action="logout">Logout</button>
+        </div>
+      </aside>
+      <div class="main">
+        <header class="topbar">
+          <button class="hamburger" data-action="toggle-sidebar">☰</button>
+          <div class="topbar-title">${navTitle(activeRoute)}</div>
+          <div class="topbar-user">👋 ${esc((App.user && (App.user.name || App.user.email)) || "")}</div>
+        </header>
+        <main class="content" id="content"></main>
       </div>
-      <div style="text-align:right">
-        <div class="l-title">${fmt(s.total)}</div>
-        <button class="btn ghost" style="padding:4px 10px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();reprintInvoice("${s.id}")'>🖨️</button>
-      </div>
-    </div>`).join("")
-    : `<div class="empty">No sales yet. Tap <b>POS</b> to create first invoice.</div>`}
+    </div>
   `;
-  root.innerHTML = shell("dashboard", html);
-}
-function qa(route, icon, label, color) {
-  const bg = color || "var(--blue)";
-  return `<button class="qa-item qa-modern-item" onclick="location.hash='#/${route}'">
-    <div class="qi" style="background:${bg}">${icon}</div>
-    <span>${label}</span>
-  </button>`;
 }
 
-// ---------- POS / Billing ----------
-let cart = [];
-
-// ---------- Sales list + duplicate invoice print ----------
-async function renderSalesList() {
-  const sales = (await DB.getAll("sales")).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  const html = `
-  <div class="page">
-    <h2>All Sales / Invoices</h2>
-    <div class="search-bar">
-      <input id="sales-search" placeholder="Search invoice, customer…" />
-    </div>
-    <div id="sales-list">
-      ${sales.length ? sales.map(salesRow).join("") : `<div class="empty">No sales yet.</div>`}
-    </div>
-  </div>`;
-  root.innerHTML = shell("pos", html);
-  document.getElementById("sales-search").oninput = (e) => {
-    const q = e.target.value.toLowerCase();
-    const filtered = sales.filter((s) => JSON.stringify(s).toLowerCase().includes(q));
-    document.getElementById("sales-list").innerHTML = filtered.length
-      ? filtered.map(salesRow).join("")
-      : `<div class="empty">No matches</div>`;
+function navLink(route, icon, label, active) {
+  return `<a href="#/${route}" class="navlink ${active === route ? "active" : ""}">
+    <span class="ic">${icon}</span><span>${label}</span>
+  </a>`;
+}
+function navTitle(route) {
+  const map = {
+    dashboard: "Dashboard", pos: "Sell (POS)", purchase: "Stock In · Wholesale Purchase",
+    products: "Products & Inventory", suppliers: "Suppliers", customers: "Customers",
+    expenses: "Expenses", reports: "Reports & Profit / Loss", settings: "Settings"
   };
+  return map[route] || "";
 }
-function salesRow(s) {
-  return `<div class="list-row">
-    <div class="l-left" style="flex:1">
-      <div class="dot" style="background:var(--blue)">🧾</div>
-      <div>
-        <div class="l-title">#${escapeHtml(s.invoiceNo || s.id)}</div>
-        <div class="l-sub">${escapeHtml(s.customerName || "Walk-in")} · ${(s.date || "").slice(0, 16).replace("T", " ")}</div>
-      </div>
+
+/* ---------------------------------------------------------------------- */
+/* Login screen                                                            */
+/* ---------------------------------------------------------------------- */
+
+function renderLogin() {
+  const cfg = window.CFG || {};
+  appRoot().innerHTML = `
+  <div class="login-wrap">
+    <div class="login-decor">
+      <div class="blob blob-a"></div>
+      <div class="blob blob-b"></div>
     </div>
-    <div style="text-align:right">
-      <div class="l-title">${fmt(s.total)}</div>
-      <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='editInvoiceForm("${s.id}")'>✏️ Edit</button>
-        <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick='reprintInvoice("${s.id}")'>🖨️ Duplicate</button>
-        <button class="btn ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick='deleteInvoice("${s.id}")'>🗑️ Delete</button>
+    <div class="login-card">
+      <div class="login-logo-wrap">
+        <img src="${esc(cfg.shopLogo || "assets/logo.png")}" class="login-logo" alt="logo" onerror="this.style.display='none'"/>
       </div>
+      <h1 class="login-shop-name">${esc(cfg.shopName || "Shop")}</h1>
+      <p class="login-tagline">${esc(cfg.shopTagline || "")}</p>
+
+      <form id="loginForm" class="login-form">
+        <label class="field">
+          <span class="field-ic">👤</span>
+          <input type="text" name="email" placeholder="Email or Phone" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span class="field-ic">🔒</span>
+          <input type="password" name="password" id="loginPass" placeholder="Password" autocomplete="current-password" required />
+          <button type="button" class="field-eye" data-action="toggle-pass">👁</button>
+        </label>
+        <div class="login-row">
+          <label class="remember"><input type="checkbox" name="remember" checked/> Remember Me</label>
+          <a href="#" class="forgot" data-action="forgot">Forgot Password?</a>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="loginBtn">↪ &nbsp;Login</button>
+      </form>
+
+      <div class="or-divider"><span>OR</span></div>
+
+      <button class="btn btn-outline btn-block btn-lg" data-action="show-signup">➕&nbsp; Create New Account</button>
+
+      <form id="signupForm" class="login-form hidden">
+        <label class="field">
+          <span class="field-ic">🏷</span>
+          <input type="text" name="name" placeholder="Your Name" required/>
+        </label>
+        <label class="field">
+          <span class="field-ic">👤</span>
+          <input type="text" name="email" placeholder="Email" required/>
+        </label>
+        <label class="field">
+          <span class="field-ic">🔒</span>
+          <input type="password" name="password" placeholder="Password (6+ characters)" minlength="6" required/>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">Create Account</button>
+        <button type="button" class="btn btn-ghost btn-block" data-action="show-login">← Back to Login</button>
+      </form>
+
+      <div class="login-features">
+        <div class="lf"><div class="lf-ic">🛡</div><div><b>Secure Login</b><span>Your data is safe with us</span></div></div>
+        <div class="lf"><div class="lf-ic">🛍</div><div><b>Quality Products</b><span>Toys &amp; Cosmetics best quality</span></div></div>
+        <div class="lf"><div class="lf-ic">🎧</div><div><b>24/7 Support</b><span>We are here to help you</span></div></div>
+      </div>
+      <p class="login-footer">© ${new Date().getFullYear()} ${esc(cfg.shopName || "Shop")} · All Rights Reserved</p>
+      ${!(window.SMSync && SMSync.isConfigured()) ? `<p class="offline-note">Offline mode — cloud sync ke liye <code>js/config.js</code> me Firebase keys add karen. Default login: <b>admin</b> / <b>admin123</b></p>` : ""}
     </div>
   </div>`;
 }
-window.reprintInvoice = async (id) => {
-  const sale = await DB.get("sales", id);
-  if (!sale) { toast("Invoice not found"); return; }
-  showInvoice({ ...sale, _duplicate: true }, { duplicate: true });
-};
-window.deleteInvoice = async (id) => {
-  const sale = await DB.get("sales", id);
-  if (!sale) { toast("Invoice not found"); return; }
-  const okDel = await showConfirm(`Invoice #${sale.invoiceNo || sale.id} delete karein? Ye action wapis nahi ho sakta.`, { title: "Delete Invoice?", okText: "Delete", danger: true });
-  if (!okDel) return;
-  await DB.remove("sales", id);
-  await logAudit("delete", `Deleted Invoice: ${sale.invoiceNo || sale.id} (${sale.customerName || "Walk-in"}, ${fmt(sale.total)})`);
-  toast("Invoice deleted");
-  renderSalesList();
-};
 
-// ---------- Edit Invoice (customer info, payment, discount, item quantities) ----------
-window.editInvoiceForm = async (id) => {
-  const sale = await DB.get("sales", id);
-  if (!sale) { toast("Invoice not found"); return; }
-  const products = await DB.getAll("products");
-  const overlay = document.createElement("div");
-  overlay.id = "invoice-edit-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
-  const knownPayments = ["cash", "card", "credit"];
-  const itemsRows = (sale.items || []).map((it, idx) => `
-    <div class="form-row" style="display:flex;align-items:center;gap:10px">
-      <div style="flex:1">
-        <div style="font-weight:600">${escapeHtml(it.name)}</div>
-        <div style="font-size:11px;color:var(--muted)">${fmt(it.price)} each</div>
-      </div>
-      <input type="number" min="0" value="${it.qty}" data-idx="${idx}" class="edit-item-qty" style="width:70px;text-align:center" />
-    </div>`).join("");
-  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">Edit Invoice #${escapeHtml(sale.invoiceNo || sale.id)}</h2>
-    <div class="form-row"><label>Customer Name</label><input id="ei-name" value="${escapeHtml(sale.customerName || "")}" /></div>
-    <div class="form-row"><label>Customer Phone</label><input id="ei-phone" value="${escapeHtml(sale.customerPhone || "")}" /></div>
-    <div class="form-row"><label>Payment</label>
-      <select id="ei-payment">
-        <option value="cash" ${sale.payment === "cash" ? "selected" : ""}>Cash</option>
-        <option value="card" ${sale.payment === "card" ? "selected" : ""}>Card</option>
-        <option value="credit" ${sale.payment === "credit" ? "selected" : ""}>Credit</option>
-        <option value="${escapeHtml(sale.payment || "other")}" ${!knownPayments.includes(sale.payment) ? "selected" : ""}>${escapeHtml(!knownPayments.includes(sale.payment) ? (sale.payment || "Other") : "Other")}</option>
-      </select>
+/* ---------------------------------------------------------------------- */
+/* Dashboard                                                                */
+/* ---------------------------------------------------------------------- */
+
+async function renderDashboard() {
+  const products = await getProducts();
+  const sales = await getSales();
+  const todayFrom = new Date(); todayFrom.setHours(0, 0, 0, 0);
+  const todaySales = sales.filter(s => !s.returned && s.date >= todayFrom.getTime());
+  const todayRevenue = todaySales.reduce((a, s) => a + s.total, 0);
+  const todayCogs = todaySales.reduce((a, s) => a + s.items.reduce((x, it) => x + (it.cost || 0) * it.qty, 0), 0);
+  const todayProfit = todayRevenue - todayCogs;
+
+  const stockCostValue = products.reduce((a, p) => a + (p.costPrice || 0) * (p.stock || 0), 0);
+  const stockRetailValue = products.reduce((a, p) => a + (p.sellPrice || 0) * (p.stock || 0), 0);
+  const lowStock = products.filter(p => (p.stock || 0) <= lowStockThreshold(p));
+  const trend = await last7DaysSales();
+  const maxTrend = Math.max(1, ...trend.map(d => d.total));
+
+  $("#content").innerHTML = `
+    <div class="cards-grid">
+      ${statCard("🧾", "Today's Sales", money(todayRevenue), "")}
+      ${statCard("📈", "Today's Profit", money(todayProfit), todayProfit >= 0 ? "good" : "bad")}
+      ${statCard("📦", "Stock Value (cost)", money(stockCostValue), "")}
+      ${statCard("🏷", "Stock Value (retail)", money(stockRetailValue), "")}
+      ${statCard("⚠️", "Low Stock Items", lowStock.length, lowStock.length ? "warn" : "")}
+      ${statCard("🧸", "Total Products", products.length, "")}
     </div>
-    <div class="form-row"><label>Discount</label><input id="ei-discount" type="number" value="${Number(sale.discount || 0)}" /></div>
-    <div style="font-weight:700;margin:12px 0 4px">Items (adjust quantity, 0 = remove)</div>
-    <div id="ei-items">${itemsRows || `<div class="empty">No items on this invoice.</div>`}</div>
-    <button class="btn full" id="ei-save" style="margin-top:14px">Save Changes</button>
-    <button class="btn ghost full" id="ei-cancel" style="margin-top:8px">Cancel</button>
+
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>Last 7 Days Sales</h3>
+        <div class="bars">
+          ${trend.map(d => `
+            <div class="bar-col">
+              <div class="bar" style="height:${Math.max(4, (d.total / maxTrend) * 100)}%" title="${money(d.total)}"></div>
+              <div class="bar-label">${d.label}</div>
+            </div>`).join("")}
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Low Stock Alerts</h3>
+        ${lowStock.length === 0 ? `<p class="muted">Sab stock theek hai 👍</p>` : `
+        <table class="mini-table">
+          <thead><tr><th>Product</th><th>Stock</th></tr></thead>
+          <tbody>
+            ${lowStock.slice(0, 8).map(p => `<tr><td>${esc(p.name)}</td><td class="warn-text">${p.stock || 0} ${esc(p.unit || "")}</td></tr>`).join("")}
+          </tbody>
+        </table>`}
+      </section>
+    </div>
+
+    <section class="panel">
+      <h3>Recent Sales</h3>
+      ${sales.length === 0 ? `<p class="muted">Abhi tak koi sale nahi hui.</p>` : `
+      <table class="mini-table">
+        <thead><tr><th>Receipt</th><th>Date</th><th>Items</th><th>Total</th></tr></thead>
+        <tbody>
+          ${sales.slice(0, 8).map(s => `<tr>
+            <td>${esc(s.receiptNo || s.id.slice(0, 6))}</td>
+            <td>${fmtDate(s.date)}</td>
+            <td>${s.items.reduce((a, i) => a + i.qty, 0)}</td>
+            <td>${money(s.total)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </section>
+  `;
+}
+
+function statCard(icon, label, value, tone) {
+  return `<div class="stat-card ${tone || ""}">
+    <div class="stat-ic">${icon}</div>
+    <div><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>
   </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#ei-cancel").onclick = () => overlay.remove();
-  overlay.querySelector("#ei-save").onclick = async () => {
-    const newName = overlay.querySelector("#ei-name").value.trim() || "Walk-in Customer";
-    const newPhone = overlay.querySelector("#ei-phone").value.trim();
-    const newPayment = overlay.querySelector("#ei-payment").value;
-    const newDiscount = Number(overlay.querySelector("#ei-discount").value || 0);
-    const qtyInputs = overlay.querySelectorAll(".edit-item-qty");
-    const newItems = (sale.items || [])
-      .map((it, idx) => ({ ...it, qty: Math.max(0, Number(qtyInputs[idx].value || 0)) }))
-      .filter((it) => it.qty > 0);
+}
 
-    // Restore old quantities to stock, then deduct new quantities
-    const touched = new Set();
-    for (const oldItem of (sale.items || [])) {
-      const p = products.find((x) => x.id === oldItem.id);
-      if (p) { p.qty = Number(p.qty || 0) + Number(oldItem.qty || 0); touched.add(p.id); }
-    }
-    for (const newItem of newItems) {
-      const p = products.find((x) => x.id === newItem.id);
-      if (p) { p.qty = Math.max(0, Number(p.qty || 0) - Number(newItem.qty || 0)); touched.add(p.id); }
-    }
-    for (const p of products) {
-      if (touched.has(p.id)) await DB.put("products", p);
-    }
-
-    const subtotal = newItems.reduce((a, c) => a + c.price * c.qty, 0);
-    const total = Math.max(0, subtotal - newDiscount);
-    const profit = newItems.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - newDiscount;
-
-    sale.customerName = newName;
-    sale.customerPhone = newPhone;
-    sale.payment = newPayment;
-    sale.discount = newDiscount;
-    sale.items = newItems;
-    sale.subtotal = subtotal;
-    sale.total = total;
-    sale.profit = profit;
-    sale.updatedAt = Date.now();
-
-    await DB.put("sales", sale);
-    await logAudit("update", `Edited Invoice: ${sale.invoiceNo || sale.id} — new total ${fmt(total)}`);
-    overlay.remove();
-    toast("Invoice updated");
-    renderSalesList();
-  };
-};
+/* ---------------------------------------------------------------------- */
+/* POS / Sell                                                              */
+/* ---------------------------------------------------------------------- */
 
 async function renderPOS() {
-  const products = await DB.getAll("products");
-  const customers = await DB.getAll("customers");
-  const html = `
-  <div class="page">
-    <h2>POS / Billing</h2>
-    <div class="card">
-      <div class="form-row"><label>Saved Customer (optional)</label>
-        <select id="pos-cust">
-          <option value="">— Select to auto-fill —</option>
-          ${customers.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}${c.phone ? " (" + escapeHtml(c.phone) + ")" : ""}</option>`).join("")}
-        </select></div>
-      <div class="form-row"><label>Customer Name *</label>
-        <input id="pos-cust-name" type="text" placeholder="Name type karo…" autocomplete="off" /></div>
-      <div class="form-row"><label>Phone</label>
-        <input id="pos-cust-phone" type="tel" placeholder="03xx…" autocomplete="off" /></div>
-      <div class="form-row"><label>Add Product</label>
-        <div style="display:flex;gap:8px">
-          <select id="pos-product" style="flex:1">
-            <option value="">Select product…</option>
-            ${products.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} — ${fmt(p.salePrice)} (Stock: ${p.qty})</option>`).join("")}
+  const products = await getProducts();
+  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
+
+  $("#content").innerHTML = `
+    <div class="pos-grid">
+      <section class="panel pos-products">
+        <div class="pos-search-row">
+          <input type="text" id="posSearch" placeholder="🔍 Product ya SKU search karen..." class="input"/>
+          <select id="posCategory" class="input input-sm">
+            <option value="">All Categories</option>
+            ${categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
           </select>
-          <button class="icon-btn" id="pos-scan" title="Scan barcode">📷</button>
-        </div></div>
+        </div>
+        <div class="product-grid" id="posProductGrid"></div>
+      </section>
+
+      <section class="panel pos-cart">
+        <h3>Cart</h3>
+        <div id="cartItems" class="cart-items"></div>
+        <div class="cart-summary" id="cartSummary"></div>
+        <label class="mini-label">Customer (optional)</label>
+        <input type="text" id="posCustomer" class="input" placeholder="Customer name"/>
+        <label class="mini-label">Discount (${esc((window.CFG && CFG.currencySymbol) || "")})</label>
+        <input type="number" id="posDiscount" class="input" value="0" min="0"/>
+        <label class="mini-label">Payment Method</label>
+        <select id="posPayment" class="input">
+          <option>Cash</option><option>Card</option><option>Bank Transfer</option><option>Other</option>
+        </select>
+        <button class="btn btn-primary btn-block btn-lg" data-action="checkout">✅ Checkout &amp; Print Receipt</button>
+        <button class="btn btn-ghost btn-block" data-action="clear-cart">Clear Cart</button>
+      </section>
     </div>
-    <div class="card" id="pos-cart"></div>
-    <div class="card">
-      <div class="form-row"><label>Discount (Rs)</label><input id="pos-discount" type="number" value="0" /></div>
-      <div class="form-row"><label>Payment Method</label>
-        <select id="pos-payment"><option>Cash</option><option>Card</option><option>Bank Transfer</option><option>Installment</option></select></div>
-    </div>
-    <button class="btn full" id="pos-checkout" style="margin-bottom:20px">Checkout</button>
-  </div>`;
-  root.innerHTML = shell("pos", html);
+  `;
+  renderPosProductGrid(products);
   renderCart();
 
-  // Select only auto-fills name/phone — user can still edit freely
-  document.getElementById("pos-cust").onchange = () => {
-    const id = document.getElementById("pos-cust").value;
-    const c = customers.find((x) => x.id === id);
-    if (c) {
-      document.getElementById("pos-cust-name").value = c.name || "";
-      document.getElementById("pos-cust-phone").value = c.phone || "";
-    }
-  };
-
-  const addProductById = (id) => {
-    const p = products.find((x) => x.id === id);
-    if (!p) return;
-    const existing = cart.find((c) => c.id === id);
-    if (existing) existing.qty += 1;
-    else cart.push({ id: p.id, name: p.name, price: Number(p.salePrice), cost: Number(p.costPrice || 0), qty: 1 });
-    renderCart();
-    toast(p.name + " added");
-  };
-
-  document.getElementById("pos-product").onchange = () => {
-    const id = document.getElementById("pos-product").value;
-    if (!id) return;
-    addProductById(id);
-    document.getElementById("pos-product").value = "";
-  };
-
-  document.getElementById("pos-checkout").onclick = () => checkout(products, customers);
-  document.getElementById("pos-scan").onclick = () => openBarcodeScanner((code) => {
-    const match = products.find((p) => p.imei === code || p.id === code || (p.name && p.name.toLowerCase() === code.toLowerCase()));
-    if (match) addProductById(match.id);
-    else toast("No product found for that code");
-  });
+  $("#posSearch").addEventListener("input", filterPosProducts);
+  $("#posCategory").addEventListener("change", filterPosProducts);
 }
+
+async function filterPosProducts() {
+  const q = ($("#posSearch").value || "").toLowerCase();
+  const cat = $("#posCategory").value;
+  const products = await getProducts();
+  const filtered = products.filter(p =>
+    (!cat || p.category === cat) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q))
+  );
+  renderPosProductGrid(filtered);
+}
+
+function renderPosProductGrid(products) {
+  const grid = $("#posProductGrid");
+  if (!grid) return;
+  if (products.length === 0) { grid.innerHTML = `<p class="muted">Koi product nahi mila.</p>`; return; }
+  grid.innerHTML = products.map(p => `
+    <button class="product-tile ${p.stock <= 0 ? "out" : ""}" data-action="add-to-cart" data-id="${p.id}" ${p.stock <= 0 ? "disabled" : ""}>
+      <div class="pt-name">${esc(p.name)}</div>
+      <div class="pt-price">${money(p.sellPrice)}</div>
+      <div class="pt-stock">${p.stock <= 0 ? "Out of stock" : (p.stock + " " + esc(p.unit || "pcs") + " left")}</div>
+    </button>
+  `).join("");
+}
+
 function renderCart() {
-  const el = document.getElementById("pos-cart");
-  if (!el) return;
-  if (!cart.length) { el.innerHTML = `<div class="empty">Cart is empty</div>`; return; }
-  const total = cart.reduce((a, c) => a + c.price * c.qty, 0);
-  el.innerHTML = cart.map((c, i) => `
-    <div class="list-row" style="padding:8px 0">
-      <div class="l-left"><div><div class="l-title">${escapeHtml(c.name)}</div><div class="l-sub">${fmt(c.price)} × ${c.qty}</div></div></div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},-1)">−</button>
-        <button type="button" class="btn ghost" style="padding:4px 10px" onclick="cartQty(${i},1)">+</button>
+  const box = $("#cartItems");
+  if (!box) return;
+  if (App.cart.length === 0) {
+    box.innerHTML = `<p class="muted">Cart khali hai. Product par click karen.</p>`;
+  } else {
+    box.innerHTML = App.cart.map((it, idx) => `
+      <div class="cart-row">
+        <div class="cr-name">${esc(it.name)}<div class="cr-price">${money(it.price)} each</div></div>
+        <div class="cr-qty">
+          <button class="qty-btn" data-action="cart-dec" data-idx="${idx}">−</button>
+          <span>${it.qty}</span>
+          <button class="qty-btn" data-action="cart-inc" data-idx="${idx}">+</button>
+        </div>
+        <div class="cr-total">${money(it.price * it.qty)}</div>
+        <button class="cr-remove" data-action="cart-remove" data-idx="${idx}">✕</button>
       </div>
-    </div>`).join("") + `<div style="text-align:right;font-weight:700;margin-top:8px">Total: ${fmt(total)}</div>`;
-}
-window.cartQty = (i, d) => { cart[i].qty += d; if (cart[i].qty <= 0) cart.splice(i, 1); renderCart(); };
-
-async function checkout(products, customers) {
-  if (!cart.length) { toast("Cart is empty"); return; }
-  let custId = document.getElementById("pos-cust").value;
-  let cust = customers.find((c) => c.id === custId);
-  const manualName = (document.getElementById("pos-cust-name")?.value || "").trim();
-  const manualPhone = (document.getElementById("pos-cust-phone")?.value || "").trim();
-  const discount = Number(document.getElementById("pos-discount").value || 0);
-  const payment = document.getElementById("pos-payment").value;
-  const subtotal = cart.reduce((a, c) => a + c.price * c.qty, 0);
+    `).join("");
+  }
+  const subtotal = App.cart.reduce((a, it) => a + it.price * it.qty, 0);
+  const discount = Number($("#posDiscount") ? $("#posDiscount").value : 0) || 0;
   const total = Math.max(0, subtotal - discount);
-  const profit = cart.reduce((a, c) => a + (c.price - c.cost) * c.qty, 0) - discount;
-  const invoiceNo = "INV-" + (10000 + (await DB.getAll("sales")).length + 1);
-  const customerName = manualName || (cust ? cust.name : "Walk-in Customer");
-  const customerPhone = manualPhone || (cust ? (cust.phone || "") : "");
+  $("#cartSummary").innerHTML = `
+    <div class="sum-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
+    <div class="sum-row"><span>Discount</span><span>-${money(discount)}</span></div>
+    <div class="sum-row grand"><span>Total</span><span>${money(total)}</span></div>
+  `;
+}
 
-  // Auto-create / link customer
-  if (customerName && customerName !== "Walk-in Customer" && !cust) {
-    const allCust = await DB.getAll("customers");
-    cust = allCust.find((c) =>
-      (c.name || "").toLowerCase() === customerName.toLowerCase() ||
-      (customerPhone && c.phone === customerPhone)
-    );
-    if (!cust) {
-      cust = { name: customerName, phone: customerPhone, points: 0 };
-      await DB.put("customers", cust);
-      custId = cust.id;
-    } else {
-      custId = cust.id;
-      if (customerPhone && !cust.phone) { cust.phone = customerPhone; await DB.put("customers", cust); }
-    }
+async function addToCart(productId) {
+  const products = await getProducts();
+  const p = products.find(x => x.id === productId);
+  if (!p || p.stock <= 0) return;
+  const existing = App.cart.find(c => c.productId === productId);
+  if (existing) {
+    if (existing.qty >= p.stock) { toast("Stock khatam ho gaya hai.", "warn"); return; }
+    existing.qty++;
+  } else {
+    App.cart.push({ productId: p.id, name: p.name, price: p.sellPrice, cost: p.costPrice || 0, qty: 1, stock: p.stock });
   }
+  renderCart();
+}
 
-  // Installment: advance (app modal — no browser domain)
-  let advancePaid = 0;
-  if ((payment || "").toLowerCase() === "installment") {
-    const raw = await showPrompt(
-      "Abhi customer ne kitna diya? (advance / down payment)",
-      "0",
-      { title: "Installment — Total " + fmt(total), type: "number", okText: "Continue" }
-    );
-    if (raw == null) return;
-    advancePaid = Math.max(0, Number(raw) || 0);
-    if (advancePaid > total) advancePaid = total;
-  }
-
+async function checkout() {
+  if (App.cart.length === 0) { toast("Cart khali hai.", "warn"); return; }
+  const products = await getProducts();
+  const discount = Number($("#posDiscount").value) || 0;
+  const subtotal = App.cart.reduce((a, it) => a + it.price * it.qty, 0);
+  const total = Math.max(0, subtotal - discount);
   const sale = {
-    invoiceNo, customerId: custId || null, customerName, customerPhone,
-    items: cart.map((c) => ({ id: c.id, name: c.name, price: c.price, cost: c.cost, qty: c.qty })),
-    subtotal, discount, total, profit, payment, date: new Date().toISOString(),
-    advancePaid: (payment || "").toLowerCase() === "installment" ? advancePaid : undefined
+    id: uid(),
+    receiptNo: "R" + Date.now().toString().slice(-8),
+    items: App.cart.map(it => ({ productId: it.productId, name: it.name, qty: it.qty, price: it.price, cost: it.cost })),
+    subtotal, discount, total,
+    paymentMethod: $("#posPayment").value,
+    customerName: $("#posCustomer").value || "",
+    cashier: (App.user && (App.user.name || App.user.email)) || "",
+    date: Date.now(),
   };
-  await DB.put("sales", sale);
-  for (const item of cart) {
-    const p = products.find((x) => x.id === item.id);
+  // decrement stock
+  for (const it of sale.items) {
+    const p = products.find(x => x.id === it.productId);
     if (p) {
-      p.qty = Math.max(0, Number(p.qty) - item.qty);
-      if (p.imei && p.qty === 0) p.soldInvoice = invoiceNo;
+      p.stock = Math.max(0, (p.stock || 0) - it.qty);
       await DB.put("products", p);
     }
   }
-  if (cust) {
-    cust.points = Number(cust.points || 0) + Math.floor(total / 1000);
-    await DB.put("customers", cust);
-  }
-
-  // Auto-create installment plan
-  if ((payment || "").toLowerCase() === "installment") {
-    const itemNames = cart.map((c) => c.name + (c.qty > 1 ? " x" + c.qty : "")).join(", ");
-    const remaining = Math.max(0, total - advancePaid);
-    const inst = {
-      customerName,
-      customerId: custId || null,
-      customerPhone,
-      item: itemNames,
-      invoiceNo,
-      totalAmount: total,
-      paid: advancePaid,
-      remaining,
-      dueDate: todayKey(),
-      status: remaining <= 0 ? "paid" : "active",
-      updatedAt: Date.now()
-    };
-    await DB.put("installments", inst);
-    await logAudit("installment", `Plan ${invoiceNo}: Total ${fmt(total)}, Paid ${fmt(advancePaid)}, Baki ${fmt(remaining)}`);
-    toast(`Installment: Total ${fmt(total)} · Diya ${fmt(advancePaid)} · Baki ${fmt(remaining)}`);
-  }
-
-  await logAudit("sale", `Invoice ${invoiceNo} created for ${sale.customerName} — ${fmt(total)}`);
-  cart = [];
-  if ((payment || "").toLowerCase() !== "installment") toast("Invoice " + invoiceNo + " created");
-  showInvoice(sale);
+  await DB.put("sales", sale);
+  await logAudit("sale", `${sale.receiptNo} · ${money(sale.total)}`);
+  toast("Sale mukammal ho gayi ✅", "ok");
+  App.cart = [];
+  window.Receipt && Receipt.print(sale);
+  await renderPOS();
 }
 
-function showInvoice(sale, opts = {}) {
-  const isDup = !!opts.duplicate;
-  const shopName = (window.CFG && CFG.shopName) || "Shop POS";
-  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP";
-  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
-  const credit = window.creditFooter ? creditFooter() : "";
-  const overlay = document.createElement("div");
-  overlay.id = "invoice-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
-  const itemsHtml = (sale.items || []).map((i) => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
-    <span>${escapeHtml(i.name)} x${i.qty}</span><span>${fmt(i.price * i.qty)}</span></div>`).join("");
-  const waText = encodeURIComponent(
-    `${shopName}\nInvoice #${sale.invoiceNo}\nCustomer: ${sale.customerName}\n\n` +
-    sale.items.map((i) => `${i.name} x${i.qty} = ${fmt(i.price * i.qty)}`).join("\n") +
-    `\n\nDiscount: ${fmt(sale.discount)}\nTotal: ${fmt(sale.total)}\nPayment: ${sale.payment}\nThank you for your business!`
-  );
-  const qrPayload = `${shopNameShort}|${sale.invoiceNo}|${sale.customerName}|${sale.total}|${sale.date}`;
-  overlay.innerHTML = `<div id="invoice-print-area">
-  <div id="invoice-box" class="receipt-80mm">
-    <div style="text-align:center;font-weight:800;font-size:15px">${escapeHtml(shopNameShort)}</div>
-    <div style="text-align:center;font-size:10px;margin-bottom:6px">${escapeHtml(shopSub)}</div>
-    ${isDup ? '<div style="text-align:center;font-weight:800;font-size:12px;margin:4px 0">*** DUPLICATE COPY ***</div>' : ''}
-    <div class="rline"></div>
-    <div style="font-size:11px">Invoice #${sale.invoiceNo}<br/>Customer: ${escapeHtml(sale.customerName)}${sale.customerPhone ? " (" + escapeHtml(sale.customerPhone) + ")" : ""}<br/>Date: ${new Date(sale.date).toLocaleString()}</div>
-    <div class="rline"></div>
-    ${itemsHtml}
-    <div class="rline"></div>
-    <div style="display:flex;justify-content:space-between;font-size:12px"><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
-    <div style="display:flex;justify-content:space-between;font-size:12px"><span>Discount</span><span>-${fmt(sale.discount)}</span></div>
-    <div style="display:flex;justify-content:space-between;font-weight:800;font-size:14px;margin-top:2px"><span>TOTAL</span><span>${fmt(sale.total)}</span></div>
-    <div style="font-size:11px;margin-top:2px">Payment: ${sale.payment}</div>
-    <div class="rline"></div>
-    <div id="qr-code" style="display:flex;justify-content:center;margin:8px 0"></div>
-    <div style="text-align:center;font-size:11px">Thank you for your business!</div>
-    <div style="text-align:center;font-size:9px;margin-top:8px;color:#555">${escapeHtml(credit)}</div>
-  </div>
-  </div>
-  <div class="no-print" style="position:fixed;bottom:24px;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:0 20px;flex-wrap:wrap">
-    <button class="btn" id="thermal-print-btn">🖨️ Thermal Print</button>
-    ${sale.customerPhone ? `<a class="btn" style="background:#25D366;text-decoration:none" target="_blank" href="https://wa.me/${sale.customerPhone.replace(/\D/g, "")}?text=${waText}">WhatsApp</a>` : ""}
-    <button class="btn ghost" id="invoice-close">Close</button>
-  </div>`;
-  document.body.appendChild(overlay);
-  if (typeof QRCode !== "undefined") {
-    new QRCode(document.getElementById("qr-code"), { text: qrPayload, width: 90, height: 90, correctLevel: QRCode.CorrectLevel.M });
-  }
-  document.getElementById("thermal-print-btn").onclick = async () => {
-    try {
-      await printSaleThermal({ ...sale, _duplicate: isDup || sale._duplicate });
-    } catch (e) {
-      console.error(e);
-      toast(e.message || "Print failed");
-    }
-  };
-  document.getElementById("invoice-close").onclick = () => { overlay.remove(); location.hash = "#/dashboard"; };
-}
+/* ---------------------------------------------------------------------- */
+/* Purchase / Stock-In (wholesale)                                         */
+/* ---------------------------------------------------------------------- */
 
-/** ESC/POS thermal print for POS invoice (Bluetooth / USB) */
-async function printSaleThermal(sale) {
-  if (typeof ThermalPrinter === "undefined") {
-    toast("Printer library missing");
-    return;
-  }
-  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP POS";
-  const shopSub = (window.CFG && CFG.shopSubtitle) || "";
-  const credit = window.creditFooter ? creditFooter() : "";
-  const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80, chunkSize: 48, chunkDelay: 40, feedBeforeCut: 1, usePartialCut: true });
-  window.shopPrinter = printer;
+App.purchaseCart = [];
 
-  if (!printer.isConnected) {
-    toast("Printer connect karo…");
-    const name = await printer.connect();
-    toast("Connected: " + name);
-  }
+async function renderPurchase() {
+  const suppliers = await getSuppliers();
+  const products = await getProducts();
+  $("#content").innerHTML = `
+    <div class="pos-grid">
+      <section class="panel">
+        <h3>Add Stock Item</h3>
+        <label class="mini-label">Existing product (optional)</label>
+        <select id="purchProduct" class="input">
+          <option value="">— New product —</option>
+          ${products.map(p => `<option value="${p.id}">${esc(p.name)} (stock: ${p.stock || 0})</option>`).join("")}
+        </select>
+        <div class="two-col">
+          <div><label class="mini-label">Name</label><input id="purchName" class="input" placeholder="Product name"/></div>
+          <div><label class="mini-label">Category</label><input id="purchCategory" class="input" placeholder="Toy / Cosmetic"/></div>
+        </div>
+        <div class="two-col">
+          <div><label class="mini-label">Qty</label><input id="purchQty" type="number" class="input" value="1" min="1"/></div>
+          <div><label class="mini-label">Wholesale Cost / unit</label><input id="purchCost" type="number" class="input" value="0" min="0"/></div>
+        </div>
+        <div class="two-col">
+          <div><label class="mini-label">Sell Price / unit</label><input id="purchSell" type="number" class="input" value="0" min="0"/></div>
+          <div><label class="mini-label">Unit</label><input id="purchUnit" class="input" placeholder="pcs" value="pcs"/></div>
+        </div>
+        <button class="btn btn-outline btn-block" data-action="add-purchase-item">➕ Add to Purchase List</button>
+      </section>
 
-  printer.setSettings({ paperWidth: 80 }); // shop receipts usually 80mm
-  const w = printer.charsPerLine;
-  const line = "-".repeat(Math.min(w, 42));
-  const thick = "=".repeat(Math.min(w, 42));
-
-  await printer.init();
-  await printer.printText(shopNameShort, { align: "center", bold: true });
-  if (shopSub) await printer.printText(shopSub, { align: "center" });
-  if (sale._duplicate) await printer.printText("*** DUPLICATE COPY ***", { align: "center", bold: true });
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Invoice #" + (sale.invoiceNo || ""));
-  await printer.printText("Customer: " + (sale.customerName || "Walk-in"));
-  if (sale.customerPhone) await printer.printText("Phone: " + sale.customerPhone);
-  await printer.printText("Date: " + new Date(sale.date).toLocaleString());
-  await printer.printText(line, { align: "center" });
-
-  for (const item of (sale.items || [])) {
-    const name = String(item.name || "").slice(0, w - 10);
-    const amt = "Rs " + Number(item.price * item.qty).toLocaleString("en-PK");
-    await printer.printText(name + " x" + item.qty);
-    await printer.printText(amt, { align: "right" });
-  }
-
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Subtotal: Rs " + Number(sale.subtotal || 0).toLocaleString("en-PK"));
-  if (sale.discount) await printer.printText("Discount: -Rs " + Number(sale.discount).toLocaleString("en-PK"));
-  await printer.printText(thick, { align: "center" });
-  await printer.printText("TOTAL: Rs " + Number(sale.total || 0).toLocaleString("en-PK"), { bold: true });
-  await printer.printText("Payment: " + (sale.payment || "Cash"));
-  await printer.printText(line, { align: "center" });
-  await printer.printText("Thank you for your business!", { align: "center" });
-  if (credit) await printer.printSmall(credit, { align: "center" });
-  await printer.feed(printer.feedBeforeCut || 1);
-  await printer.doCut();
-  toast("Printed");
-}
-
-
-// ---------- Generic list-page builder for simple CRUD modules ----------
-function moduleListPage(opts) {
-  // opts: {title, store, activeTab, fields[], renderRow(item), emptyText}
-  return async function render() {
-    const items = (await DB.getAll(opts.store)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const html = `
-    <div class="page">
-      <h2>${opts.title}</h2>
-      <div class="search-bar">
-        <input id="mod-search" placeholder="Search ${opts.title.toLowerCase()}…" />
-        <button class="icon-btn" id="mod-voice" title="Voice search">🎤</button>
-        ${opts.store === "products" ? `<button class="icon-btn" id="mod-scan" title="Scan barcode">📷</button>` : ""}
-      </div>
-      <div id="mod-list">${items.length ? items.map(opts.renderRow).join("") : `<div class="empty">${opts.emptyText}</div>`}</div>
+      <section class="panel pos-cart">
+        <h3>Purchase List</h3>
+        <div id="purchItems" class="cart-items"></div>
+        <div class="cart-summary" id="purchSummary"></div>
+        <label class="mini-label">Supplier</label>
+        <select id="purchSupplier" class="input">
+          <option value="">— Walk-in / Unknown —</option>
+          ${suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}
+        </select>
+        <label class="mini-label">Note</label>
+        <input id="purchNote" class="input" placeholder="e.g. Invoice #, notes"/>
+        <button class="btn btn-primary btn-block btn-lg" data-action="save-purchase">💾 Save Stock-In</button>
+        <button class="btn btn-ghost btn-block" data-action="clear-purchase">Clear</button>
+      </section>
     </div>
-    <button class="fab" id="mod-add">+</button>`;
-    root.innerHTML = shell(opts.activeTab, html);
-    document.getElementById("mod-add").onclick = () => openForm(opts, null);
-    const doFilter = (q) => {
-      q = q.toLowerCase();
-      const filtered = items.filter((it) => JSON.stringify(it).toLowerCase().includes(q));
-      document.getElementById("mod-list").innerHTML = filtered.length ? filtered.map(opts.renderRow).join("") : `<div class="empty">No matches</div>`;
-    };
-    document.getElementById("mod-search").oninput = (e) => doFilter(e.target.value);
-    document.getElementById("mod-voice").onclick = () => voiceSearch((text) => { document.getElementById("mod-search").value = text; doFilter(text); });
-    const scanBtn = document.getElementById("mod-scan");
-    if (scanBtn) scanBtn.onclick = () => openBarcodeScanner((code) => {
-      document.getElementById("mod-search").value = code;
-      doFilter(code);
-    });
-  };
-}
+  `;
 
-// ---------- Voice search (Web Speech API — no external lib needed) ----------
-function voiceSearch(onResult) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast("Voice search not supported on this browser"); return; }
-  const rec = new SR();
-  rec.lang = "en-US";
-  rec.onresult = (e) => onResult(e.results[0][0].transcript);
-  rec.onerror = () => toast("Couldn't hear that, try again");
-  rec.start();
-  toast("Listening…");
-}
-
-// ---------- Barcode/QR camera scanner (html5-qrcode, loaded via CDN) ----------
-function openBarcodeScanner(onResult) {
-  if (typeof Html5Qrcode === "undefined") { toast("Scanner library not loaded — check your internet connection"); return; }
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;background:#000;z-index:1000;display:flex;flex-direction:column";
-  overlay.innerHTML = `<div style="padding:14px;color:#fff;display:flex;justify-content:space-between;align-items:center">
-    <b>Scan Barcode / QR</b><button class="icon-btn" id="scan-close">✕</button></div>
-    <div id="scan-region" style="flex:1"></div>`;
-  document.body.appendChild(overlay);
-  const scanner = new Html5Qrcode("scan-region");
-  scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 220 },
-    (decodedText) => {
-      scanner.stop().then(() => overlay.remove());
-      onResult(decodedText);
-    },
-    () => {}
-  ).catch(() => { toast("Camera unavailable"); overlay.remove(); });
-  overlay.querySelector("#scan-close").onclick = () => { scanner.stop().catch(() => {}); overlay.remove(); };
-}
-
-// ---------- Barcode label printing (JsBarcode, loaded via CDN) ----------
-function printBarcodeLabel(product) {
-  if (typeof JsBarcode === "undefined") { toast("Barcode library not loaded — check your internet connection"); return; }
-  const credit = window.creditFooter ? creditFooter() : "";
-  const w = window.open("", "_blank");
-  w.document.write(`<html><body style="text-align:center;font-family:sans-serif">
-    <div>${escapeHtml(product.name)}</div><svg id="bc"></svg><div>${fmt(product.salePrice)}</div>
-    <div style="font-size:9px;color:#777;margin-top:6px">${escapeHtml(credit)}</div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.6/JsBarcode.all.min.js"><\/script>
-    <script>JsBarcode("#bc","${(product.imei || product.id)}",{width:2,height:60}); window.print();<\/script>
-    </body></html>`);
-  w.document.close();
-}
-window.printBarcodeLabel = printBarcodeLabel;
-
-function openForm(opts, existing) {
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
-  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">${existing ? "Edit" : "Add"} ${opts.title.replace(/s$/, "")}</h2>
-    <div id="form-fields"></div>
-    <button class="btn full" id="form-save">Save</button>
-    <button class="btn ghost full" id="form-cancel" style="margin-top:8px">Cancel</button>
-    ${existing ? `<button class="btn danger full" id="form-del" style="margin-top:8px">Delete</button>` : ""}
-  </div>`;
-  document.body.appendChild(overlay);
-  const fc = overlay.querySelector("#form-fields");
-  fc.innerHTML = opts.fields.map((f) => `
-    <div class="form-row"><label>${f.label}</label>
-    ${f.type === "select"
-      ? `<select id="f-${f.key}">${f.options.map((o) => `<option value="${o.value}" ${existing && existing[f.key] === o.value ? "selected" : ""}>${o.label}</option>`).join("")}</select>`
-      : `<input id="f-${f.key}" type="${f.type || "text"}" value="${escapeHtml(existing ? existing[f.key] ?? "" : f.default ?? "")}" />`}
-    </div>`).join("");
-  if (opts.store === "products") {
-    const imeiInput = overlay.querySelector("#f-imei");
-    if (imeiInput) {
-      const scanBtn = document.createElement("button");
-      scanBtn.className = "btn ghost full"; scanBtn.style.marginBottom = "10px"; scanBtn.textContent = "📷 Scan IMEI/Barcode";
-      scanBtn.onclick = () => openBarcodeScanner((code) => { imeiInput.value = code; });
-      imeiInput.after(scanBtn);
-    }
-  }
-  // Returns: invoice # → auto-fill customer, item, amount
-  if (opts.store === "returns") {
-    const invInput = overlay.querySelector("#f-invoiceNo");
-    if (invInput) {
-      const hint = document.createElement("div");
-      hint.style.cssText = "font-size:11px;color:var(--muted);margin:-6px 0 10px";
-      hint.textContent = "Invoice # likho / paste karo — details auto fill";
-      invInput.parentElement.after(hint);
-      const fillFromInvoice = async () => {
-        const q = (invInput.value || "").trim().toLowerCase();
-        if (!q) return;
-        const sales = await DB.getAll("sales");
-        const sale = sales.find((s) =>
-          String(s.invoiceNo || "").toLowerCase() === q ||
-          String(s.id || "").toLowerCase() === q ||
-          String(s.invoiceNo || "").toLowerCase().includes(q)
-        );
-        if (!sale) { toast("Invoice nahi mili"); return; }
-        const nameEl = overlay.querySelector("#f-customerName");
-        const itemEl = overlay.querySelector("#f-item");
-        const amtEl = overlay.querySelector("#f-amount");
-        const dateEl = overlay.querySelector("#f-date");
-        if (nameEl) nameEl.value = sale.customerName || "";
-        if (amtEl) amtEl.value = sale.total || 0;
-        if (dateEl && !dateEl.value) dateEl.value = todayKey();
-        if (itemEl) {
-          const names = (sale.items || []).map((i) => i.name + " x" + i.qty).join(", ");
-          itemEl.value = names || itemEl.value;
-        }
-        invInput.value = sale.invoiceNo || invInput.value;
-        toast("Invoice loaded: " + (sale.invoiceNo || ""));
-      };
-      invInput.addEventListener("blur", fillFromInvoice);
-      invInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fillFromInvoice(); } });
-    }
-  }
-  overlay.querySelector("#form-cancel").onclick = () => overlay.remove();
-  overlay.querySelector("#form-save").onclick = async () => {
-    const record = existing ? { ...existing } : {};
-    opts.fields.forEach((f) => {
-      const v = overlay.querySelector("#f-" + f.key).value;
-      record[f.key] = f.type === "number" ? Number(v || 0) : v;
-    });
-    if (opts.beforeSave) opts.beforeSave(record);
-    // IMEI unique check for products
-    if (opts.store === "products" && record.imei) {
-      const all = await DB.getAll("products");
-      const dup = all.find((p) => p.imei && p.imei === record.imei && p.id !== record.id);
-      if (dup) { toast("IMEI already used: " + dup.name); return; }
-    }
-    // Returns: restore stock once (new records only)
-    if (opts.store === "returns" && !existing) {
-      await restoreStockFromReturn(record);
-      record.stockRestored = true;
-    }
-    // Installments: record the underlying sale immediately so it counts in Reports/Dashboard totals
-    if (opts.store === "installments" && !existing) {
-      const instSale = {
-        invoiceNo: "INST-" + Date.now().toString().slice(-6),
-        customerId: null,
-        customerName: record.customerName || "Walk-in Customer",
-        customerPhone: "",
-        items: [{ id: null, name: record.item || "Installment Sale", price: Number(record.totalAmount || 0), cost: 0, qty: 1 }],
-        subtotal: Number(record.totalAmount || 0), discount: 0, total: Number(record.totalAmount || 0),
-        profit: 0, payment: "Installment", date: new Date().toISOString()
-      };
-      await DB.put("sales", instSale);
-      record.saleRecorded = true;
-    }
-    // Repairs: record a sale the moment a job is marked "delivered" (payment collected) — once only
-    if (opts.store === "repairs" && record.status === "delivered" && !record.saleRecorded && Number(record.cost || 0) > 0) {
-      const repairSale = {
-        invoiceNo: "RPR-" + Date.now().toString().slice(-6),
-        customerId: null,
-        customerName: record.customerName || "Walk-in Customer",
-        customerPhone: record.phone || "",
-        items: [{ id: null, name: "Repair: " + (record.device || "Device") + (record.fault ? " — " + record.fault : ""), price: Number(record.cost || 0), cost: 0, qty: 1 }],
-        subtotal: Number(record.cost || 0), discount: 0, total: Number(record.cost || 0),
-        profit: Number(record.cost || 0), payment: "Cash", date: new Date().toISOString()
-      };
-      await DB.put("sales", repairSale);
-      record.saleRecorded = true;
-    }
-    await DB.put(opts.store, record);
-    await logAudit(existing ? "update" : "create", `${existing ? "Updated" : "Created"} ${opts.title.replace(/s$/, "")}: ${record.name || record.title || record.customerName || record.supplierName || record.id}`);
-    overlay.remove();
-    toast("Saved");
-    router();
-  };
-  if (existing) {
-    overlay.querySelector("#form-del").onclick = async () => {
-      const okDel = await showConfirm(`${(existing.name || existing.customerName || existing.supplierName || opts.title.replace(/s$/, ""))} delete karein? Ye action wapis nahi ho sakta.`, { title: "Delete?", okText: "Delete", danger: true });
-      if (!okDel) return;
-      await DB.remove(opts.store, existing.id);
-      await logAudit("delete", `Deleted ${opts.title.replace(/s$/, "")}: ${existing.name || existing.title || existing.customerName || existing.supplierName || existing.id}`);
-      overlay.remove();
-      toast("Deleted");
-      router();
-    };
-  }
-}
-window.editItem = async (store, id, opts) => {
-  const item = await DB.get(store, id);
-  openForm(opts, item);
-};
-
-// ---------- Products ----------
-const productsOpts = {
-  title: "Products", store: "products", activeTab: "products",
-  emptyText: "No products yet. Tap + to add your first item.",
-  fields: [
-    { key: "name", label: "Product Name" },
-    { key: "category", label: "Category", type: "select", options: [
-      { value: "Mobile", label: "Mobile" }, { value: "Accessory", label: "Accessory" }, { value: "Part", label: "Spare Part" }
-    ] },
-    { key: "imei", label: "IMEI / Serial (optional)" },
-    { key: "costPrice", label: "Cost Price", type: "number" },
-    { key: "salePrice", label: "Sale Price", type: "number" },
-    { key: "qty", label: "Stock Quantity", type: "number" },
-    { key: "reorderLevel", label: "Low Stock Alert Level", type: "number", default: 5 },
-  ],
-  renderRow: (p) => `<div class="list-row" onclick='editItem("products","${p.id}", productsOpts)'>
-    <div class="l-left"><div class="dot" style="background:${Number(p.qty) <= 0 ? "var(--red)" : Number(p.qty) <= Number(p.reorderLevel || 5) ? "var(--orange)" : "var(--blue)"}">📦</div>
-      <div><div class="l-title">${escapeHtml(p.name)}</div><div class="l-sub">${escapeHtml(p.category || "")} · Stock: ${p.qty}</div></div></div>
-    <div style="text-align:right;display:flex;align-items:center;gap:8px">
-      <button class="icon-btn" style="width:30px;height:30px" onclick='event.stopPropagation();printBarcodeLabel(${JSON.stringify(p).replace(/'/g, "&#39;")})'>🏷️</button>
-      <div><div class="l-title">${fmt(p.salePrice)}</div>${Number(p.qty) <= 0 ? `<span class="pill bad">Out</span>` : Number(p.qty) <= Number(p.reorderLevel || 5) ? `<span class="pill warn">Low</span>` : `<span class="pill ok">OK</span>`}</div>
-    </div></div>`
-};
-window.productsOpts = productsOpts;
-const renderProducts = moduleListPage(productsOpts);
-
-// ---------- Customers ----------
-const customersOpts = {
-  title: "Customers", store: "customers", activeTab: "customers",
-  emptyText: "No customers yet.",
-  fields: [
-    { key: "name", label: "Full Name" },
-    { key: "phone", label: "Phone" },
-    { key: "address", label: "Address" },
-    { key: "notes", label: "Notes" },
-  ],
-  renderRow: (c) => `<div class="list-row" onclick='editItem("customers","${c.id}", customersOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--purple)">👤</div>
-      <div><div class="l-title">${escapeHtml(c.name)}</div><div class="l-sub">${escapeHtml(c.phone || "")} · ${Number(c.points || 0)} pts</div></div></div>
-    <button class="btn ghost" style="padding:6px 10px" onclick='event.stopPropagation();showLedger("${c.id}","${escapeHtml(c.name)}")'>Ledger</button></div>`
-};
-window.customersOpts = customersOpts;
-const renderCustomers = moduleListPage(customersOpts);
-
-window.showLedger = async (customerId, name) => {
-  const [sales, installments, returnsList] = await Promise.all([
-    DB.getAll("sales"), DB.getAll("installments"), DB.getAll("returns")
-  ]);
-  const nameLower = (name || "").toLowerCase();
-  const custSales = sales.filter((s) =>
-    s.customerId === customerId || (s.customerName || "").toLowerCase() === nameLower
-  );
-  const custInst = installments.filter((i) =>
-    (i.customerId && i.customerId === customerId) ||
-    (i.customerName || "").toLowerCase() === nameLower
-  );
-  const custReturns = returnsList.filter((r) => (r.customerName || "").toLowerCase() === nameLower);
-
-  // Traditional ledger: Sale = Liye, Payments = Diye
-  const txns = [];
-  const saleInvoiceNos = new Set();
-  custSales.forEach((s) => {
-    const pay = (s.payment || "").toLowerCase();
-    const isCredit = pay === "credit" || pay === "installment";
-    saleInvoiceNos.add(String(s.invoiceNo || s.id || "").toLowerCase());
-    txns.push({
-      date: s.date || "",
-      label: "Sale #" + (s.invoiceNo || s.id),
-      amount: -Number(s.total || 0),
-      note: s.payment || ""
-    });
-    if (!isCredit) {
-      txns.push({
-        date: s.date || "",
-        label: "Payment (" + (s.payment || "Cash") + ")",
-        amount: +Number(s.total || 0),
-        note: "#" + (s.invoiceNo || "")
-      });
-    } else if (Number(s.advancePaid || 0) > 0) {
-      txns.push({
-        date: s.date || "",
-        label: "Advance / Down payment",
-        amount: +Number(s.advancePaid),
-        note: "#" + (s.invoiceNo || "")
-      });
+  $("#purchProduct").addEventListener("change", (e) => {
+    const p = products.find(x => x.id === e.target.value);
+    if (p) {
+      $("#purchName").value = p.name;
+      $("#purchCategory").value = p.category || "";
+      $("#purchCost").value = p.costPrice || 0;
+      $("#purchSell").value = p.sellPrice || 0;
+      $("#purchUnit").value = p.unit || "pcs";
+    } else {
+      $("#purchName").value = ""; $("#purchCategory").value = "";
+      $("#purchCost").value = 0; $("#purchSell").value = 0; $("#purchUnit").value = "pcs";
     }
   });
-  custInst.forEach((i) => {
-    const paid = Number(i.paid || 0);
-    const invKey = String(i.invoiceNo || "").toLowerCase();
-    const linkedToSale = invKey && saleInvoiceNos.has(invKey);
-    if (linkedToSale) {
-      const linkedSale = custSales.find((s) => String(s.invoiceNo || s.id || "").toLowerCase() === invKey);
-      const adv = Number(linkedSale && linkedSale.advancePaid || 0);
-      const extraPaid = Math.max(0, paid - adv);
-      if (extraPaid > 0) {
-        txns.push({
-          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
-          label: "Installment paid — " + (i.item || i.invoiceNo || ""),
-          amount: +extraPaid,
-          note: "Total paid " + fmt(paid) + " / " + fmt(i.totalAmount || 0)
-        });
-      }
-    } else if (Number(i.totalAmount || 0) > 0) {
-      txns.push({
-        date: i.dueDate || (i.updatedAt ? new Date(i.updatedAt).toISOString() : ""),
-        label: "Installment plan — " + (i.item || ""),
-        amount: -Number(i.totalAmount || 0),
-        note: i.status || ""
-      });
-      if (paid > 0) {
-        txns.push({
-          date: i.updatedAt ? new Date(i.updatedAt).toISOString() : (i.dueDate || ""),
-          label: "Installment paid — " + (i.item || ""),
-          amount: +paid,
-          note: "Baki " + fmt(Math.max(0, Number(i.totalAmount || 0) - paid))
-        });
-      }
-    }
-  });
-  custReturns.forEach((r) => {
-    txns.push({
-      date: r.date || "",
-      label: "Return — " + (r.item || r.invoiceNo || ""),
-      amount: +Number(r.amount || 0),
-      note: r.status || ""
-    });
-  });
-  txns.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 
-  let balance = 0;
-  const rows = txns.map((t) => {
-    balance += t.amount;
-    const diye = t.amount > 0 ? fmt(t.amount) : "—";
-    const liye = t.amount < 0 ? fmt(Math.abs(t.amount)) : "—";
-    return `<div class="list-row" style="align-items:flex-start">
-      <div class="l-left" style="flex:1">
-        <div class="l-title">${escapeHtml(t.label)}</div>
-        <div class="l-sub">${(t.date || "").slice(0, 16).replace("T", " ")}${t.note ? " · " + escapeHtml(t.note) : ""}</div>
-      </div>
-      <div style="text-align:right;min-width:120px">
-        <div style="font-size:12px">Diye: <b style="color:var(--green)">${diye}</b></div>
-        <div style="font-size:12px">Liye: <b style="color:var(--red)">${liye}</b></div>
-      </div>
-    </div>`;
-  }).join("");
-
-  const openPlans = custInst.filter((i) => (i.status || "") !== "paid" && Number(i.remaining || 0) > 0);
-  const totalBaki = openPlans.reduce((a, i) => a + Number(i.remaining || 0), 0);
-  const plansHtml = openPlans.length ? `
-    <div class="card" style="margin-bottom:12px;border:1px solid var(--orange)">
-      <div class="l-sub">Open Installments</div>
-      ${openPlans.map((i) => `
-        <div style="display:flex;justify-content:space-between;font-size:13px;margin-top:6px;gap:8px">
-          <span>${escapeHtml(i.item || i.invoiceNo || "")}</span>
-          <span style="text-align:right">
-            <b>Total ${fmt(i.totalAmount)}</b><br/>
-            <span style="color:var(--green)">Diya ${fmt(i.paid || 0)}</span> ·
-            <span style="color:var(--red)">Baki ${fmt(i.remaining)}</span>
-          </span>
-        </div>`).join("")}
-      <div style="margin-top:8px;font-weight:700;color:var(--red)">Kul baki: ${fmt(totalBaki)}</div>
-    </div>` : "";
-
-  const overlay = document.createElement("div");
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
-  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px;max-height:85vh;overflow:auto">
-    <h2 style="margin-top:0">${escapeHtml(name)} — Ledger</h2>
-    <div class="card" style="margin-bottom:12px">
-      <div class="l-sub">Current Balance</div>
-      <div class="l-title" style="font-size:18px;color:${balance >= 0 ? "var(--green)" : "var(--red)"}">
-        ${balance >= 0
-          ? "Customer ne diye / advance: " + fmt(balance)
-          : "Customer se lena baqi: " + fmt(Math.abs(balance))}
-      </div>
-      <div class="l-sub">${custSales.length} sales · ${custInst.length} installments · ${custReturns.length} returns</div>
-    </div>
-    ${plansHtml}
-    ${rows || `<div class="empty">Koi transaction nahi</div>`}
-    <button class="btn full ghost" id="ledger-close" style="margin-top:12px">Close</button>
-  </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#ledger-close").onclick = () => overlay.remove();
-};
-
-// ---------- Repairs ----------
-const repairsOpts = {
-  title: "Repairs", store: "repairs", activeTab: "repairs",
-  emptyText: "No repair jobs yet.",
-  fields: [
-    { key: "customerName", label: "Customer Name" },
-    { key: "phone", label: "Phone" },
-    { key: "device", label: "Device Model" },
-    { key: "fault", label: "Fault Details" },
-    { key: "technician", label: "Technician" },
-    { key: "cost", label: "Repair Cost", type: "number" },
-    { key: "status", label: "Status", type: "select", options: [
-      { value: "received", label: "Received" }, { value: "in_progress", label: "In Progress" },
-      { value: "ready", label: "Ready" }, { value: "delivered", label: "Delivered" }
-    ] },
-  ],
-  renderRow: (r) => `<div class="list-row">
-    <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("repairs","${r.id}", repairsOpts)'>
-      <div class="dot" style="background:var(--orange)">🔧</div>
-      <div><div class="l-title">${escapeHtml(r.device || "")}</div>
-      <div class="l-sub">${escapeHtml(r.customerName || "")} · ${escapeHtml(r.fault || "")}</div></div>
-    </div>
-    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-      <span class="pill ${r.status === "delivered" ? "ok" : r.status === "ready" ? "warn" : "bad"}">${(r.status || "received").replace("_", " ")}</span>
-      ${r.status === "ready" && r.phone ? `<a class="btn ghost" style="padding:3px 8px;font-size:11px;background:#25D366;color:#fff;border:none;text-decoration:none"
-        href="https://wa.me/${String(r.phone).replace(/\D/g,"")}?text=${encodeURIComponent("Assalamualaikum " + (r.customerName||"") + ", aapka " + (r.device||"device") + " repair ready hai. " + ((window.CFG && CFG.shopName) || "") + ".")}"
-        target="_blank" onclick="event.stopPropagation()">WhatsApp</a>` : ""}
-    </div></div>`
-};
-window.repairsOpts = repairsOpts;
-const renderRepairs = moduleListPage(repairsOpts);
-
-// ---------- Installments ----------
-const installmentsOpts = {
-  title: "Installments", store: "installments", activeTab: "installments",
-  emptyText: "No installment plans yet.",
-  fields: [
-    { key: "customerName", label: "Customer Name" },
-    { key: "item", label: "Item" },
-    { key: "invoiceNo", label: "Invoice # (optional)" },
-    { key: "totalAmount", label: "Total Amount", type: "number" },
-    { key: "paid", label: "Amount Paid (abhi tak)", type: "number", default: 0 },
-    { key: "dueDate", label: "Next Due Date", type: "date" },
-    { key: "status", label: "Status", type: "select", options: [
-      { value: "active", label: "Active" }, { value: "paid", label: "Paid" }, { value: "overdue", label: "Overdue" }
-    ] },
-  ],
-  beforeSave: (r) => {
-    r.remaining = Math.max(0, Number(r.totalAmount || 0) - Number(r.paid || 0));
-    if (r.remaining <= 0) r.status = "paid";
-    else if (!r.status || r.status === "paid") r.status = "active";
-    r.updatedAt = Date.now();
-  },
-  renderRow: (i) => {
-    const total = Number(i.totalAmount || 0);
-    const paid = Number(i.paid || 0);
-    const rem = Number(i.remaining != null ? i.remaining : total - paid);
-    return `<div class="list-row">
-    <div class="l-left" style="flex:1;cursor:pointer" onclick='editItem("installments","${i.id}", installmentsOpts)'>
-      <div class="dot" style="background:var(--blue)">📅</div>
-      <div>
-        <div class="l-title">${escapeHtml(i.customerName || "")}</div>
-        <div class="l-sub">${escapeHtml(i.item || "")}${i.invoiceNo ? " · #" + escapeHtml(i.invoiceNo) : ""} · Due ${escapeHtml(i.dueDate || "-")}</div>
-        <div class="l-sub" style="margin-top:2px">Total ${fmt(total)} · <span style="color:var(--green)">Diya ${fmt(paid)}</span> · <span style="color:var(--red)">Baki ${fmt(rem)}</span></div>
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div class="l-title" style="color:var(--red)">${fmt(rem)}</div>
-      <span class="pill ${i.status === "paid" ? "ok" : "warn"}">${i.status || "active"}</span>
-      ${i.status !== "paid" ? `<button class="btn" style="padding:3px 8px;margin-top:4px;font-size:11px" onclick='event.stopPropagation();receiveInstallment("${i.id}")'>💵 Pay</button>` : ""}
-    </div></div>`;
-  }
-};
-window.installmentsOpts = installmentsOpts;
-const renderInstallments = moduleListPage(installmentsOpts);
-
-window.receiveInstallment = async (id) => {
-  const row = await DB.get("installments", id);
-  if (!row) return;
-  const total = Number(row.totalAmount || 0);
-  const paidSoFar = Number(row.paid || 0);
-  const rem = Number(row.remaining != null ? row.remaining : (total - paidSoFar));
-
-  const overlay = document.createElement("div");
-  overlay.id = "receive-inst-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:flex-end";
-  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:480px;margin:0 auto;border-radius:18px 18px 0 0;padding:18px">
-    <h2 style="margin-top:0">Receive Payment</h2>
-    <div class="l-sub" style="margin-bottom:10px">${escapeHtml(row.customerName || "")} · ${escapeHtml(row.item || "")}<br/>
-      Total: ${fmt(total)} · Diya: ${fmt(paidSoFar)} · <b style="color:var(--red)">Baki: ${fmt(rem)}</b>
-    </div>
-    <div class="form-row"><label>Amount Received (Rs)</label>
-      <input id="ri-amount" type="number" min="1" value="${rem}" autofocus />
-    </div>
-    <button class="btn full" id="ri-save">💵 Receive</button>
-    <button class="btn ghost full" id="ri-cancel" style="margin-top:8px">Cancel</button>
-  </div>`;
-  document.body.appendChild(overlay);
-  const amountInput = overlay.querySelector("#ri-amount");
-  amountInput.focus();
-  amountInput.select();
-  overlay.querySelector("#ri-cancel").onclick = () => overlay.remove();
-  overlay.querySelector("#ri-save").onclick = async () => {
-    const amt = Number(amountInput.value || 0);
-    if (!(amt > 0)) { toast("Invalid amount"); return; }
-    row.paid = paidSoFar + amt;
-    row.remaining = Math.max(0, total - row.paid);
-    if (row.remaining <= 0) row.status = "paid";
-    row.updatedAt = Date.now();
-    await DB.put("installments", row);
-    await logAudit("installment", "Payment " + fmt(amt) + " from " + (row.customerName || "") + " · Baki " + fmt(row.remaining));
-    toast(`Received ${fmt(amt)} · Total ${fmt(total)} · Diya ${fmt(row.paid)} · Baki ${fmt(row.remaining)}`);
-    overlay.remove();
-    askShowInstallmentReceipt(row, amt);
-  };
-};
-
-function askShowInstallmentReceipt(row, amt) {
-  const overlay = document.createElement("div");
-  overlay.id = "receipt-confirm-overlay";
-  overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
-  overlay.innerHTML = `<div style="background:var(--card);width:100%;max-width:400px;border-radius:16px;padding:18px;text-align:center">
-    <div style="font-weight:700;font-size:16px;margin-bottom:6px">Payment Received</div>
-    <div class="l-sub" style="margin-bottom:16px">${fmt(amt)} received. Print / show receipt?</div>
-    <div style="display:flex;gap:10px">
-      <button class="btn ghost full" id="rc-no">No</button>
-      <button class="btn full" id="rc-yes">🖨️ Show Receipt</button>
-    </div>
-  </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector("#rc-no").onclick = () => { overlay.remove(); router(); };
-  overlay.querySelector("#rc-yes").onclick = () => {
-    overlay.remove();
-    showInvoice({
-      invoiceNo: "INST-" + (row.id || "").slice(-6),
-      customerName: row.customerName || "",
-      customerPhone: "",
-      items: [{ name: row.item || "Installment", qty: 1, price: amt }],
-      subtotal: amt, discount: 0, total: amt, payment: "Installment",
-      date: new Date().toISOString(), _duplicate: false
-    });
-    router();
-  };
+  renderPurchaseList();
 }
 
+function renderPurchaseList() {
+  const box = $("#purchItems");
+  if (!box) return;
+  if (App.purchaseCart.length === 0) {
+    box.innerHTML = `<p class="muted">Abhi koi item add nahi hua.</p>`;
+  } else {
+    box.innerHTML = App.purchaseCart.map((it, idx) => `
+      <div class="cart-row">
+        <div class="cr-name">${esc(it.name)}<div class="cr-price">${it.qty} x ${money(it.cost)}</div></div>
+        <div class="cr-total">${money(it.qty * it.cost)}</div>
+        <button class="cr-remove" data-action="purchase-remove" data-idx="${idx}">✕</button>
+      </div>
+    `).join("");
+  }
+  const total = App.purchaseCart.reduce((a, it) => a + it.qty * it.cost, 0);
+  $("#purchSummary").innerHTML = `<div class="sum-row grand"><span>Total Cost</span><span>${money(total)}</span></div>`;
+}
 
-// ---------- Suppliers ----------
-const suppliersOpts = {
-  title: "Suppliers", store: "suppliers", activeTab: "suppliers",
-  emptyText: "No suppliers yet.",
-  fields: [
-    { key: "name", label: "Supplier Name" }, { key: "phone", label: "Phone" },
-    { key: "outstanding", label: "Outstanding Due", type: "number", default: 0 },
-  ],
-  renderRow: (s) => `<div class="list-row" onclick='editItem("suppliers","${s.id}", suppliersOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--red)">🚚</div>
-      <div><div class="l-title">${escapeHtml(s.name)}</div><div class="l-sub">${escapeHtml(s.phone || "")}</div></div></div>
-    <div class="l-title">${fmt(s.outstanding)}</div></div>`
-};
-window.suppliersOpts = suppliersOpts;
-const renderSuppliers = moduleListPage(suppliersOpts);
+function addPurchaseItem() {
+  const productId = $("#purchProduct").value || null;
+  const name = $("#purchName").value.trim();
+  if (!name) { toast("Product ka naam likhen.", "warn"); return; }
+  const qty = Number($("#purchQty").value) || 0;
+  const cost = Number($("#purchCost").value) || 0;
+  const sell = Number($("#purchSell").value) || 0;
+  const category = $("#purchCategory").value.trim() || "General";
+  const unit = $("#purchUnit").value.trim() || "pcs";
+  if (qty <= 0) { toast("Qty 0 se zyada honi chahiye.", "warn"); return; }
+  App.purchaseCart.push({ productId, name, category, qty, cost, sell, unit });
+  renderPurchaseList();
+  toast("Item list me add ho gaya.");
+}
 
-// ---------- Expenses ----------
-const expensesOpts = {
-  title: "Expenses", store: "expenses", activeTab: "reports",
-  emptyText: "No expenses recorded yet.",
-  fields: [
-    { key: "title", label: "Expense Title" },
-    { key: "amount", label: "Amount", type: "number" },
-    { key: "date", label: "Date", type: "date" },
-  ],
-  renderRow: (e) => `<div class="list-row" onclick='editItem("expenses","${e.id}", expensesOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--purple)">💰</div>
-      <div><div class="l-title">${escapeHtml(e.title)}</div><div class="l-sub">${escapeHtml(e.date || "")}</div></div></div>
-    <div class="l-title">${fmt(e.amount)}</div></div>`
-};
-window.expensesOpts = expensesOpts;
-const renderExpenses = moduleListPage(expensesOpts);
+async function savePurchase() {
+  if (App.purchaseCart.length === 0) { toast("List khali hai.", "warn"); return; }
+  const suppliers = await getSuppliers();
+  const supplierId = $("#purchSupplier").value || null;
+  const supplier = suppliers.find(s => s.id === supplierId);
+  const products = await getProducts();
 
-// ---------- Reports ----------
+  const items = [];
+  for (const it of App.purchaseCart) {
+    let product = it.productId ? products.find(p => p.id === it.productId) : products.find(p => p.name.toLowerCase() === it.name.toLowerCase());
+    if (product) {
+      product.stock = (product.stock || 0) + it.qty;
+      product.costPrice = it.cost || product.costPrice;
+      if (it.sell) product.sellPrice = it.sell;
+      await DB.put("products", product);
+    } else {
+      product = {
+        id: uid(), name: it.name, category: it.category, sku: "",
+        costPrice: it.cost, sellPrice: it.sell || it.cost, stock: it.qty,
+        unit: it.unit, lowStockAt: (window.CFG && CFG.defaultLowStockThreshold) || 5
+      };
+      await DB.put("products", product);
+    }
+    items.push({ productId: product.id, name: product.name, qty: it.qty, cost: it.cost });
+  }
+
+  const total = items.reduce((a, it) => a + it.qty * it.cost, 0);
+  const po = {
+    id: uid(), supplierId, supplierName: supplier ? supplier.name : "Walk-in / Unknown",
+    items, total, note: $("#purchNote").value || "", date: Date.now()
+  };
+  await DB.put("purchaseOrders", po);
+  await logAudit("stock-in", `${po.supplierName} · ${money(po.total)}`);
+  toast("Stock-in save ho gaya ✅", "ok");
+  App.purchaseCart = [];
+  await renderPurchase();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Products                                                                 */
+/* ---------------------------------------------------------------------- */
+
+async function renderProducts() {
+  const products = await getProducts();
+  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
+  $("#content").innerHTML = `
+    <section class="panel">
+      <div class="panel-header">
+        <h3>Products (${products.length})</h3>
+        <button class="btn btn-primary" data-action="new-product">➕ Add Product</button>
+      </div>
+      <div class="pos-search-row">
+        <input type="text" id="prodSearch" class="input" placeholder="🔍 Search products..."/>
+        <select id="prodCategory" class="input input-sm">
+          <option value="">All Categories</option>
+          ${categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Category</th><th>SKU</th><th>Cost</th><th>Sell</th><th>Stock</th><th></th></tr></thead>
+          <tbody id="prodTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  `;
+  function draw() {
+    const q = ($("#prodSearch").value || "").toLowerCase();
+    const cat = $("#prodCategory").value;
+    const filtered = products.filter(p => (!cat || p.category === cat) && (!q || p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q)));
+    $("#prodTableBody").innerHTML = filtered.map(p => `
+      <tr class="${(p.stock || 0) <= lowStockThreshold(p) ? "row-warn" : ""}">
+        <td>${esc(p.name)}</td>
+        <td>${esc(p.category || "")}</td>
+        <td>${esc(p.sku || "—")}</td>
+        <td>${money(p.costPrice)}</td>
+        <td>${money(p.sellPrice)}</td>
+        <td>${p.stock || 0} ${esc(p.unit || "")}</td>
+        <td class="row-actions">
+          <button class="icon-btn" data-action="edit-product" data-id="${p.id}">✏️</button>
+          <button class="icon-btn" data-action="delete-product" data-id="${p.id}">🗑</button>
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="7" class="muted">Koi product nahi mila.</td></tr>`;
+  }
+  draw();
+  $("#prodSearch").addEventListener("input", draw);
+  $("#prodCategory").addEventListener("change", draw);
+}
+
+function productFormModal(product) {
+  const p = product || { name: "", category: "", sku: "", costPrice: 0, sellPrice: 0, stock: 0, unit: "pcs", lowStockAt: (window.CFG && CFG.defaultLowStockThreshold) || 5 };
+  openModal(`
+    <h3>${product ? "Edit" : "Add"} Product</h3>
+    <form id="productForm">
+      <input type="hidden" name="id" value="${p.id || ""}"/>
+      <label class="mini-label">Name</label>
+      <input class="input" name="name" required value="${esc(p.name)}"/>
+      <div class="two-col">
+        <div><label class="mini-label">Category</label><input class="input" name="category" value="${esc(p.category)}" placeholder="Toy / Cosmetic"/></div>
+        <div><label class="mini-label">SKU / Barcode</label><input class="input" name="sku" value="${esc(p.sku || "")}"/></div>
+      </div>
+      <div class="two-col">
+        <div><label class="mini-label">Cost Price (wholesale)</label><input class="input" type="number" name="costPrice" value="${p.costPrice}" min="0"/></div>
+        <div><label class="mini-label">Sell Price (retail)</label><input class="input" type="number" name="sellPrice" value="${p.sellPrice}" min="0"/></div>
+      </div>
+      <div class="two-col">
+        <div><label class="mini-label">Stock Qty</label><input class="input" type="number" name="stock" value="${p.stock}" min="0"/></div>
+        <div><label class="mini-label">Unit</label><input class="input" name="unit" value="${esc(p.unit || "pcs")}"/></div>
+      </div>
+      <label class="mini-label">Low stock alert at</label>
+      <input class="input" type="number" name="lowStockAt" value="${p.lowStockAt}" min="0"/>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  `);
+}
+
+async function saveProductForm(form) {
+  const fd = new FormData(form);
+  const id = fd.get("id");
+  const p = {
+    id: id || uid(),
+    name: fd.get("name").trim(),
+    category: fd.get("category").trim() || "General",
+    sku: fd.get("sku").trim(),
+    costPrice: Number(fd.get("costPrice")) || 0,
+    sellPrice: Number(fd.get("sellPrice")) || 0,
+    stock: Number(fd.get("stock")) || 0,
+    unit: fd.get("unit").trim() || "pcs",
+    lowStockAt: Number(fd.get("lowStockAt")) || 0,
+  };
+  await DB.put("products", p);
+  await logAudit(id ? "product-edit" : "product-add", p.name);
+  closeModal();
+  toast("Product save ho gaya.", "ok");
+  await renderProducts();
+}
+
+/* ---------------------------------------------------------------------- */
+/* Suppliers / Customers / Expenses — simple CRUD lists                    */
+/* ---------------------------------------------------------------------- */
+
+async function renderSuppliers() {
+  const rows = await getSuppliers();
+  $("#content").innerHTML = simpleCrudPanel("Suppliers", rows, [
+    ["name", "Name"], ["phone", "Phone"], ["address", "Address"]
+  ], "supplier");
+}
+async function renderCustomers() {
+  const rows = await getCustomers();
+  $("#content").innerHTML = simpleCrudPanel("Customers", rows, [
+    ["name", "Name"], ["phone", "Phone"]
+  ], "customer");
+}
+async function renderExpenses() {
+  const rows = await getExpenses();
+  const total = rows.reduce((a, e) => a + Number(e.amount || 0), 0);
+  $("#content").innerHTML = `
+    <section class="panel">
+      <div class="panel-header"><h3>Expenses — Total: ${money(total)}</h3>
+        <button class="btn btn-primary" data-action="new-expense">➕ Add Expense</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Title</th><th>Category</th><th>Amount</th><th>Date</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map(e => `<tr>
+              <td>${esc(e.title)}</td><td>${esc(e.category || "")}</td><td>${money(e.amount)}</td><td>${fmtDateOnly(e.date)}</td>
+              <td class="row-actions"><button class="icon-btn" data-action="delete-expense" data-id="${e.id}">🗑</button></td>
+            </tr>`).join("") || `<tr><td colspan="5" class="muted">Koi expense nahi.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function simpleCrudPanel(title, rows, fields, kind) {
+  return `
+    <section class="panel">
+      <div class="panel-header"><h3>${title} (${rows.length})</h3>
+        <button class="btn btn-primary" data-action="new-${kind}">➕ Add ${title.slice(0, -1)}</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>${fields.map(f => `<th>${f[1]}</th>`).join("")}<th></th></tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              ${fields.map(f => `<td>${esc(r[f[0]] || "")}</td>`).join("")}
+              <td class="row-actions">
+                <button class="icon-btn" data-action="edit-${kind}" data-id="${r.id}">✏️</button>
+                <button class="icon-btn" data-action="delete-${kind}" data-id="${r.id}">🗑</button>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="${fields.length + 1}" class="muted">Koi record nahi.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function supplierFormModal(rec) {
+  const r = rec || { name: "", phone: "", address: "" };
+  openModal(`
+    <h3>${rec ? "Edit" : "Add"} Supplier</h3>
+    <form id="supplierForm">
+      <input type="hidden" name="id" value="${r.id || ""}"/>
+      <label class="mini-label">Name</label><input class="input" name="name" required value="${esc(r.name)}"/>
+      <label class="mini-label">Phone</label><input class="input" name="phone" value="${esc(r.phone || "")}"/>
+      <label class="mini-label">Address</label><input class="input" name="address" value="${esc(r.address || "")}"/>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>`);
+}
+function customerFormModal(rec) {
+  const r = rec || { name: "", phone: "" };
+  openModal(`
+    <h3>${rec ? "Edit" : "Add"} Customer</h3>
+    <form id="customerForm">
+      <input type="hidden" name="id" value="${r.id || ""}"/>
+      <label class="mini-label">Name</label><input class="input" name="name" required value="${esc(r.name)}"/>
+      <label class="mini-label">Phone</label><input class="input" name="phone" value="${esc(r.phone || "")}"/>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>`);
+}
+function expenseFormModal() {
+  openModal(`
+    <h3>Add Expense</h3>
+    <form id="expenseForm">
+      <label class="mini-label">Title</label><input class="input" name="title" required placeholder="e.g. Shop Rent"/>
+      <label class="mini-label">Category</label><input class="input" name="category" placeholder="Rent / Bills / Salary / Other"/>
+      <label class="mini-label">Amount</label><input class="input" type="number" name="amount" min="0" required/>
+      <label class="mini-label">Date</label><input class="input" type="date" name="date" value="${new Date().toISOString().slice(0, 10)}"/>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>`);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Reports                                                                  */
+/* ---------------------------------------------------------------------- */
+
 async function renderReports() {
-  const [sales, expenses, products, returnsList] = await Promise.all([
-    DB.getAll("sales"), DB.getAll("expenses"), DB.getAll("products"), DB.getAll("returns")
-  ]);
-  const totalSales = sales.reduce((a, s) => a + Number(s.total || 0), 0);
-  const totalProfit = sales.reduce((a, s) => a + Number(s.profit || 0), 0);
-  const totalExpenses = expenses.reduce((a, e) => a + Number(e.amount || 0), 0);
-  const totalReturns = returnsList.reduce((a, r) => a + Number(r.amount || 0), 0);
-  const stockValue = products.reduce((a, p) => a + Number(p.costPrice || 0) * Number(p.qty || 0), 0);
-  const lowStock = products.filter((p) => Number(p.qty) <= Number(p.reorderLevel || 5));
+  const r = await computeReport();
+  $("#content").innerHTML = `
+    <section class="panel">
+      <div class="panel-header">
+        <h3>Profit &amp; Loss</h3>
+        <div class="range-tabs">
+          ${["today", "week", "month", "custom"].map(k => `<button class="chip ${App.reportRange === k ? "active" : ""}" data-action="set-range" data-range="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}
+        </div>
+      </div>
+      ${App.reportRange === "custom" ? `
+        <div class="two-col">
+          <div><label class="mini-label">From</label><input type="date" id="rangeFrom" class="input" value="${App.reportFrom || ""}"/></div>
+          <div><label class="mini-label">To</label><input type="date" id="rangeTo" class="input" value="${App.reportTo || ""}"/></div>
+        </div>
+        <button class="btn btn-outline" data-action="apply-range">Apply</button>
+      ` : ""}
+      <div class="cards-grid" style="margin-top:16px">
+        ${statCard("💰", "Revenue", money(r.revenue), "")}
+        ${statCard("📉", "Cost of Goods Sold", money(r.cogs), "")}
+        ${statCard("🧮", "Gross Profit", money(r.grossProfit), r.grossProfit >= 0 ? "good" : "bad")}
+        ${statCard("💸", "Expenses", money(r.expenseTotal), "")}
+        ${statCard("✅", "Net Profit", money(r.netProfit), r.netProfit >= 0 ? "good" : "bad")}
+        ${statCard("🎟", "Discounts Given", money(r.discountTotal), "")}
+      </div>
+    </section>
 
-  // Last 7 days sales bars
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    const sum = sales.filter((s) => (s.date || "").slice(0, 10) === key).reduce((a, s) => a + Number(s.total || 0), 0);
-    days.push({ key: key.slice(5), sum });
-  }
-  const maxDay = Math.max(1, ...days.map((d) => d.sum));
-  const bars = days.map((d) => {
-    const h = Math.max(4, Math.round((d.sum / maxDay) * 80));
-    return `<div style="flex:1;text-align:center"><div style="height:80px;display:flex;align-items:flex-end;justify-content:center"><div style="width:70%;height:${h}px;background:linear-gradient(180deg,var(--blue),var(--blue2));border-radius:6px 6px 0 0"></div></div><div style="font-size:10px;color:var(--muted);margin-top:4px">${d.key}</div></div>`;
-  }).join("");
-
-  const lowWa = lowStock.length
-    ? encodeURIComponent("Low stock alert — " + ((window.CFG && CFG.shopNameShort) || "Shop") + "\\n" + lowStock.map((p) => p.name + " qty:" + p.qty).join("\\n"))
-    : "";
-
-  const html = `
-  <div class="page">
-    <h2>Reports</h2>
-    <div class="card"><div class="l-sub">Last 7 days sales</div>
-      <div style="display:flex;gap:4px;margin-top:10px">${bars}</div>
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>Top Selling Products</h3>
+        ${r.topSelling.length === 0 ? `<p class="muted">Koi data nahi.</p>` : `
+        <table class="mini-table"><thead><tr><th>Product</th><th>Qty Sold</th></tr></thead>
+        <tbody>${r.topSelling.map(([name, qty]) => `<tr><td>${esc(name)}</td><td>${qty}</td></tr>`).join("")}</tbody></table>`}
+      </section>
+      <section class="panel">
+        <h3>Stock Valuation</h3>
+        <div class="sum-row"><span>At cost price</span><span>${money(r.stockCostValue)}</span></div>
+        <div class="sum-row"><span>At retail price</span><span>${money(r.stockRetailValue)}</span></div>
+        <div class="sum-row grand"><span>Potential profit if all sold</span><span>${money(r.stockRetailValue - r.stockCostValue)}</span></div>
+      </section>
     </div>
-    <div class="card"><div class="l-sub">Total Sales</div><div class="l-title" style="font-size:20px">${fmt(totalSales)}</div></div>
-    <div class="card"><div class="l-sub">Total Profit</div><div class="l-title" style="font-size:20px">${fmt(totalProfit)}</div></div>
-    <div class="card"><div class="l-sub">Returns</div><div class="l-title" style="font-size:20px">${fmt(totalReturns)}</div></div>
-    <div class="card"><div class="l-sub">Total Expenses</div><div class="l-title" style="font-size:20px">${fmt(totalExpenses)}</div></div>
-    <div class="card"><div class="l-sub">Net (Profit − Expenses − Returns)</div><div class="l-title" style="font-size:20px">${fmt(totalProfit - totalExpenses - totalReturns)}</div></div>
-    <div class="card"><div class="l-sub">Current Stock Value</div><div class="l-title" style="font-size:20px">${fmt(stockValue)}</div></div>
-    <div class="card">
-      <div class="l-sub">Low stock items: ${lowStock.length}</div>
-      ${lowStock.length ? `<a class="btn full" style="margin-top:8px;background:#25D366;text-decoration:none;text-align:center" target="_blank" href="https://wa.me/?text=${lowWa}">WhatsApp low-stock list</a>` : ""}
-    </div>
-    <button class="btn full ghost" id="rep-export">Export Sales as CSV</button>
-    <button class="btn full" id="returns-btn" style="margin-top:10px">Returns / Credit Notes</button>
-    <button class="btn full ghost" id="expenses-btn" style="margin-top:10px">Manage Expenses</button>
-  </div>`;
-  root.innerHTML = shell("reports", html);
-  document.getElementById("expenses-btn").onclick = () => location.hash = "#/expenses";
-  document.getElementById("returns-btn").onclick = () => location.hash = "#/returns";
-  document.getElementById("rep-export").onclick = () => exportCSV(sales);
+
+    <section class="panel">
+      <div class="panel-header">
+        <h3>Sales in Range (${r.sales.length})</h3>
+        <button class="btn btn-outline" data-action="export-sales-csv">⬇ Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Receipt</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            ${r.sales.map(s => `<tr>
+              <td>${esc(s.receiptNo || s.id.slice(0, 6))}</td>
+              <td>${fmtDate(s.date)}</td>
+              <td>${esc(s.customerName || "—")}</td>
+              <td>${s.items.reduce((a, i) => a + i.qty, 0)}</td>
+              <td>${money(s.total)}</td>
+              <td class="row-actions">
+                <button class="icon-btn" data-action="reprint-sale" data-id="${s.id}">🖨</button>
+                <button class="icon-btn" data-action="return-sale" data-id="${s.id}">↩</button>
+              </td>
+            </tr>`).join("") || `<tr><td colspan="6" class="muted">Is range me koi sale nahi.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
 }
 
-function exportCSV(sales) {
-  const rows = [["Invoice", "Customer", "Total", "Profit", "Date"]];
-  sales.forEach((s) => rows.push([s.invoiceNo, s.customerName, s.total, s.profit, s.date]));
-  const csv = rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
+async function exportSalesCsv() {
+  const r = await computeReport();
+  const lines = [["Receipt", "Date", "Customer", "Items", "Subtotal", "Discount", "Total"].join(",")];
+  for (const s of r.sales) {
+    lines.push([
+      s.receiptNo, new Date(s.date).toISOString(), (s.customerName || "").replace(/,/g, " "),
+      s.items.reduce((a, i) => a + i.qty, 0), s.subtotal, s.discount, s.total
+    ].join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "sales-report.csv";
+  a.download = "sales-export.csv";
   a.click();
 }
 
-// ---------- Settings ----------
-async function renderSettings() {
-  const html = `
-  <div class="page">
-    <h2>Settings</h2>
-    <div class="card">
-      <div class="form-row"><label>Shop Branch Name</label><input id="set-branch" value="${escapeHtml((await DB.get("settings", "shop"))?.branch || "Main Branch")}" /></div>
-      <button class="btn ghost full" id="set-branch-save" style="margin-bottom:10px">Save Branch</button>
-      <div class="form-row"><label>Theme</label>
-        <select id="set-theme">
-          <option value="dark" ${state.theme === "dark" ? "selected" : ""}>Dark</option>
-          <option value="light" ${state.theme === "light" ? "selected" : ""}>Light</option>
-        </select></div>
-    </div>
-    <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Firebase Sync</div>
-      <div class="l-sub" style="margin-bottom:8px">${window.SMSync && window.SMSync.isReady() && window.SMSync.currentUser()
-        ? "🟢 Signed in — 1 doc/record · sync 3s + realtime"
-        : window.SMSync && window.SMSync.isReady()
-          ? "🟡 Firebase ready — Firebase email se login karo"
-          : "⚪ Firebase not ready."}</div>
-      <button class="btn full" id="sync-now" style="margin-bottom:8px">🔄 Sync Now</button>
-      <button class="btn full" id="sync-full" style="margin-bottom:8px;background:var(--green)">☁️ Full Cloud Resync</button>
-      <button class="btn full ghost" id="sync-clear" style="margin-bottom:8px">Clear pending queue</button>
-      <div class="form-row"><label>Language / زبان</label>
-        <select id="set-lang">
-          <option value="en" ${(localStorage.getItem("sm_lang")||"en")==="en"?"selected":""}>English</option>
-          <option value="ur" ${(localStorage.getItem("sm_lang")||"en")==="ur"?"selected":""}>اردو</option>
-        </select></div>
-    </div>
-    <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Thermal Printer</div>
-      <div class="l-sub" style="margin-bottom:8px" id="printer-status">${window.shopPrinter && window.shopPrinter.isConnected ? "🟢 Printer connected" : "⚪ Not connected (Bluetooth / USB)"}</div>
-      <button class="btn full" id="printer-connect" style="margin-bottom:8px">🔌 Connect Printer</button>
-      <button class="btn full ghost" id="printer-test">Test Print</button>
-    </div>
-    ${state.user.role === "admin" ? `
-    <div class="card">
-      <div class="l-title" style="margin-bottom:10px">Management</div>
-      <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/staff'">👨‍💼 Staff & Roles</button>
-      <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/purchase-orders'">🚚 Purchase Orders</button>
-      <button class="btn full ghost" style="margin-bottom:8px" onclick="location.hash='#/cashbook'">💵 Cash Book / Daily Closing</button>
-      <button class="btn full ghost" style="margin-bottom:8px" onclick="searchImeiRegistry()">🔍 IMEI / Sold Registry</button>
-      <button class="btn full ghost" onclick="location.hash='#/audit-logs'">📋 Audit Logs</button>
-    </div>
-    <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Backup & Restore</div>
-      <div class="l-sub" style="margin-bottom:10px">Save all your shop data (products, sales, customers, repairs, everything) as one file, or restore it later on this or another device.</div>
-      <button class="btn full" id="backup-now" style="margin-bottom:8px">⬇️ Backup Now</button>
-      <label class="btn full ghost" style="display:block;text-align:center" for="restore-file">⬆️ Restore from Backup</label>
-      <input type="file" id="restore-file" accept="application/json" style="display:none" />
-    </div>
-    <div class="card">
-      <div class="l-title" style="margin-bottom:6px">Import Products (CSV)</div>
-      <div class="l-sub" style="margin-bottom:8px">Columns: name,category,costPrice,salePrice,qty,reorderLevel</div>
-      <input type="file" id="csv-import" accept=".csv" />
-    </div>` : ""}
-    <button class="btn full ghost" id="set-logout">Logout</button>
-    <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:16px">${escapeHtml(window.creditFooter ? creditFooter() : "")}</div>
-  </div>`;
-  root.innerHTML = shell("settings", html);
-  document.getElementById("set-branch-save").onclick = async () => {
-    await DB.put("settings", { id: "shop", branch: document.getElementById("set-branch").value });
-    toast("Branch saved");
-  };
-  document.getElementById("set-theme").onchange = (e) => {
-    state.theme = e.target.value;
-    localStorage.setItem("sm_theme", state.theme);
-    document.documentElement.setAttribute("data-theme", state.theme);
-  };
-  document.getElementById("set-logout").onclick = async () => {
-    await logAudit("logout", state.user.name + " logged out");
-    if (window.SMSync && window.SMSync.currentUser()) {
-      try { await SMSync.signOut(); } catch (e) { console.warn(e); }
-    }
-    state.user = null;
-    await DB.remove("settings", "session");
-    location.hash = "";
-    router();
-  };
-  const pConn = document.getElementById("printer-connect");
-  const pTest = document.getElementById("printer-test");
-  if (pConn) pConn.onclick = async () => {
-    try {
-      if (typeof ThermalPrinter === "undefined") { toast("Printer lib missing"); return; }
-      if (!window.shopPrinter) window.shopPrinter = new ThermalPrinter({ paperWidth: 80, debug: false });
-      const name = await window.shopPrinter.connect();
-      const st = document.getElementById("printer-status");
-      if (st) st.textContent = "🟢 " + name;
-      toast("Connected: " + name);
-    } catch (e) { toast(e.message || "Connect failed"); }
-  };
-  if (pTest) pTest.onclick = async () => {
-    try {
-      if (!window.shopPrinter || !window.shopPrinter.isConnected) {
-        toast("Pehle Connect Printer karo");
-        return;
-      }
-      await window.shopPrinter.printTest();
-      toast("Test printed");
-    } catch (e) { toast(e.message || "Test failed"); }
-  };
-  const syncNow = document.getElementById("sync-now");
-  const syncClear = document.getElementById("sync-clear");
-  if (syncNow) syncNow.onclick = async () => {
-    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
-    toast("Syncing…");
-    await SMSync.flushQueue();
-    window._pendingCount = await DB.pendingSyncCount();
-    updateSyncStatusBar();
-    toast(window._pendingCount ? (window._pendingCount + " still pending") : "Synced");
-  };
-  const syncFull = document.getElementById("sync-full");
-  if (syncFull) syncFull.onclick = async () => {
-    if (!window.SMSync || !SMSync.currentUser()) { toast("Firebase email se login karo"); return; }
-    const okResync = await showConfirm("Pending clear + pull cloud + push all local docs.", { title: "Full Cloud Resync?", okText: "Resync" });
-    if (!okResync) return;
-    toast("Full resync… wait");
-    try {
-      const n = await SMSync.fullResync();
-      window._pendingCount = await DB.pendingSyncCount();
-      updateSyncStatusBar();
-      toast("Done — " + n + " docs on cloud");
-    } catch (e) { toast(e.message || "Resync failed"); }
-  };
-  if (syncClear) syncClear.onclick = async () => {
-    const okClear = await showConfirm("Local data safe rahega — sirf pending sync queue clear hogi.", { title: "Clear Pending Queue?", okText: "Clear" });
-    if (!okClear) return;
-    await SMSync.clearPending();
-    window._pendingCount = 0;
-    updateSyncStatusBar();
-    toast("Queue cleared — fresh");
-  };
-  const langSel = document.getElementById("set-lang");
-  if (langSel) langSel.onchange = (e) => {
-    localStorage.setItem("sm_lang", e.target.value);
-    toast(e.target.value === "ur" ? "زبان اردو" : "Language English");
-    router();
-  };
-  const csvInput = document.getElementById("csv-import");
-  if (csvInput) csvInput.onchange = (e) => importProductsCSV(e.target.files[0]);
-  const backupBtn = document.getElementById("backup-now");
-  if (backupBtn) backupBtn.onclick = backupNow;
-  const restoreInput = document.getElementById("restore-file");
-  if (restoreInput) restoreInput.onchange = (e) => restoreBackup(e.target.files[0]);
+async function returnSale(id) {
+  if (!confirm("Ye poori sale return / cancel karni hai? Stock wapas add ho jayega.")) return;
+  const sale = await DB.get("sales", id);
+  if (!sale || sale.returned) return;
+  const products = await getProducts();
+  for (const it of sale.items) {
+    const p = products.find(x => x.id === it.productId);
+    if (p) { p.stock = (p.stock || 0) + it.qty; await DB.put("products", p); }
+  }
+  sale.returned = true;
+  await DB.put("sales", sale);
+  await DB.put("returns", { id: uid(), saleId: sale.id, items: sale.items, amount: sale.total, date: Date.now() });
+  await logAudit("return", sale.receiptNo);
+  toast("Sale return ho gayi, stock update ho gaya.", "ok");
+  await renderReports();
 }
 
-// ---------- Backup & Restore ----------
-const BACKUP_STORES = ["products", "customers", "sales", "repairs", "installments",
-  "suppliers", "expenses", "staff", "settings", "purchaseOrders", "auditLogs", "attendance", "returns"];
+/* ---------------------------------------------------------------------- */
+/* Settings                                                                  */
+/* ---------------------------------------------------------------------- */
 
-async function backupNow() {
-  const data = {};
-  for (const store of BACKUP_STORES) data[store] = await DB.getAll(store);
-  const payload = { app: "sm-app", version: 2, exportedAt: new Date().toISOString(), data };
+async function renderSettings() {
+  const cfg = window.CFG || {};
+  const syncOn = window.SMSync && SMSync.isConfigured();
+  const queue = await DB.getSyncQueue();
+  $("#content").innerHTML = `
+    <div class="panel-grid">
+      <section class="panel">
+        <h3>Shop</h3>
+        <p><b>Name:</b> ${esc(cfg.shopName)}</p>
+        <p><b>Tagline:</b> ${esc(cfg.shopTagline || "")}</p>
+        <p class="muted">Shop name / logo edit karne ke liye <code>js/config.js</code> file kholen.</p>
+      </section>
+
+      <section class="panel">
+        <h3>Cloud Sync</h3>
+        <p><b>Status:</b> ${syncOn ? "✅ Connected to Firebase" : "⚪ Offline (Firebase not configured)"}</p>
+        <p><b>Pending changes not yet synced:</b> ${queue.length}</p>
+        ${syncOn ? `
+          <button class="btn btn-primary" data-action="sync-now">🔄 Sync Now</button>
+          <button class="btn btn-outline" data-action="full-resync">⏫ Full Resync (push + pull)</button>
+        ` : `<p class="muted">Firebase config add karne ke baad ye options yahan active ho jayenge. Dekhen <code>js/config.js</code>.</p>`}
+      </section>
+
+      <section class="panel">
+        <h3>Backup</h3>
+        <button class="btn btn-outline btn-block" data-action="export-backup">⬇ Download Backup (JSON)</button>
+        <label class="btn btn-outline btn-block" style="text-align:center;cursor:pointer;">
+          ⬆ Restore from Backup
+          <input type="file" id="restoreFile" accept="application/json" style="display:none"/>
+        </label>
+      </section>
+
+      <section class="panel">
+        <h3>Printer</h3>
+        <p class="muted">Receipt paper width: <b>${esc(cfg.receiptPaperWidth || "80mm")}</b> (change in config.js)</p>
+        <button class="btn btn-outline" data-action="test-print">🖨 Test Print</button>
+      </section>
+
+      <section class="panel">
+        <h3>Install App</h3>
+        <p class="muted">Browser menu me "Add to Home Screen" / "Install App" option se ye software app ki tarah phone ya PC par install ho sakta hai.</p>
+        <button class="btn btn-outline" id="installBtn" style="display:none">📲 Install App</button>
+      </section>
+    </div>
+  `;
+  $("#restoreFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      const payload = JSON.parse(text);
+      await DB.importAll(payload);
+      toast("Backup restore ho gaya ✅", "ok");
+      render();
+    } catch (err) { toast("Invalid backup file.", "bad"); }
+  });
+  if (window.deferredInstallPrompt) {
+    const btn = $("#installBtn");
+    btn.style.display = "inline-flex";
+    btn.addEventListener("click", async () => {
+      window.deferredInstallPrompt.prompt();
+      await window.deferredInstallPrompt.userChoice;
+      window.deferredInstallPrompt = null;
+    });
+  }
+}
+
+async function exportBackup() {
+  const payload = await DB.exportAll();
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `sm-backup-${todayKey()}.json`;
+  a.download = `shop-backup-${todayKey(Date.now())}.json`;
   a.click();
-  await logAudit("backup", "Full backup exported");
-  toast("Backup downloaded");
 }
 
-function restoreBackup(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    let payload;
-    try { payload = JSON.parse(e.target.result); } catch { toast("Invalid backup file"); return; }
-    if (!payload || !payload.data) { toast("Invalid backup file"); return; }
-    let count = 0;
-    for (const store of BACKUP_STORES) {
-      const records = payload.data[store];
-      if (!Array.isArray(records)) continue;
-      for (const rec of records) { await DB.put(store, rec); count++; }
-    }
-    await logAudit("restore", `Restored ${count} records from backup`);
-    toast(`Restored ${count} records`);
-    router();
-  };
-  reader.readAsText(file);
-}
+/* ---------------------------------------------------------------------- */
+/* Event delegation                                                        */
+/* ---------------------------------------------------------------------- */
 
-function importProductsCSV(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const lines = e.target.result.split(/\r?\n/).filter(Boolean);
-    const header = lines[0].split(",").map((h) => h.trim());
-    let count = 0;
-    for (const line of lines.slice(1)) {
-      const cols = line.split(",");
-      const rec = {};
-      header.forEach((h, i) => { rec[h] = cols[i] ? cols[i].trim() : ""; });
-      if (!rec.name) continue;
-      rec.costPrice = Number(rec.costPrice || 0);
-      rec.salePrice = Number(rec.salePrice || 0);
-      rec.qty = Number(rec.qty || 0);
-      rec.reorderLevel = Number(rec.reorderLevel || 5);
-      await DB.put("products", rec);
-      count++;
-    }
-    await logAudit("import", `Imported ${count} products via CSV`);
-    toast(`Imported ${count} products`);
-    router();
-  };
-  reader.readAsText(file);
-}
+document.addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const action = el.dataset.action;
+  const id = el.dataset.id;
 
-
-
-/** Restore product qty when a return is saved */
-async function restoreStockFromReturn(record) {
-  const sales = await DB.getAll("sales");
-  const inv = String(record.invoiceNo || "").trim().toLowerCase();
-  const sale = sales.find((s) =>
-    String(s.invoiceNo || "").toLowerCase() === inv ||
-    String(s.id || "").toLowerCase() === inv
-  );
-  const products = await DB.getAll("products");
-  let restored = 0;
-  if (sale && Array.isArray(sale.items)) {
-    for (const it of sale.items) {
-      const p = products.find((x) => x.id === it.id) || products.find((x) => x.name === it.name);
-      if (p) {
-        p.qty = Number(p.qty || 0) + Number(it.qty || 1);
-        if (p.soldInvoice) delete p.soldInvoice;
-        await DB.put("products", p);
-        restored++;
-      }
+  switch (action) {
+    case "toggle-pass": {
+      const inp = $("#loginPass");
+      inp.type = inp.type === "password" ? "text" : "password";
+      break;
     }
-  } else if (record.item) {
-    const name = String(record.item).split(",")[0].split(" x")[0].trim();
-    const p = products.find((x) => x.name && x.name.toLowerCase() === name.toLowerCase());
-    if (p) {
-      p.qty = Number(p.qty || 0) + 1;
-      await DB.put("products", p);
-      restored = 1;
+    case "show-signup": $("#loginForm").classList.add("hidden"); $("#signupForm").classList.remove("hidden"); break;
+    case "show-login": $("#signupForm").classList.add("hidden"); $("#loginForm").classList.remove("hidden"); break;
+    case "forgot": e.preventDefault(); toast("Password reset ke liye shop admin se rabta karen.", "warn"); break;
+
+    case "logout":
+      if (window.SMSync && SMSync.currentUser()) await SMSync.signOut();
+      App.user = null;
+      await DB.setMeta("session", null);
+      render();
+      break;
+
+    case "sync-now":
+      if (window.SMSync && SMSync.isReady()) { toast("Sync ho raha hai..."); await SMSync.flushQueue(); await SMSync.pullAll(); toast("Sync mukammal ✅", "ok"); render(); }
+      else toast("Cloud sync configure nahi hai.", "warn");
+      break;
+    case "full-resync":
+      if (window.SMSync && SMSync.isReady()) { toast("Full resync ho raha hai..."); await SMSync.fullResync(); toast("Resync mukammal ✅", "ok"); render(); }
+      break;
+
+    case "toggle-sidebar": document.querySelector(".sidebar").classList.toggle("open"); break;
+
+    // POS
+    case "add-to-cart": await addToCart(id); break;
+    case "cart-inc": App.cart[el.dataset.idx].qty++; renderCart(); break;
+    case "cart-dec": {
+      const it = App.cart[el.dataset.idx];
+      it.qty--; if (it.qty <= 0) App.cart.splice(el.dataset.idx, 1);
+      renderCart(); break;
     }
+    case "cart-remove": App.cart.splice(el.dataset.idx, 1); renderCart(); break;
+    case "clear-cart": App.cart = []; renderCart(); break;
+    case "checkout": await checkout(); break;
+
+    // Purchase
+    case "add-purchase-item": addPurchaseItem(); break;
+    case "purchase-remove": App.purchaseCart.splice(el.dataset.idx, 1); renderPurchaseList(); break;
+    case "clear-purchase": App.purchaseCart = []; renderPurchaseList(); break;
+    case "save-purchase": await savePurchase(); break;
+
+    // Products
+    case "new-product": productFormModal(null); break;
+    case "edit-product": productFormModal(await DB.get("products", id)); break;
+    case "delete-product": if (confirm("Ye product delete karna hai?")) { await DB.remove("products", id); toast("Product delete ho gaya."); renderProducts(); } break;
+
+    // Suppliers
+    case "new-supplier": supplierFormModal(null); break;
+    case "edit-supplier": supplierFormModal(await DB.get("suppliers", id)); break;
+    case "delete-supplier": if (confirm("Supplier delete karna hai?")) { await DB.remove("suppliers", id); renderSuppliers(); } break;
+
+    // Customers
+    case "new-customer": customerFormModal(null); break;
+    case "edit-customer": customerFormModal(await DB.get("customers", id)); break;
+    case "delete-customer": if (confirm("Customer delete karna hai?")) { await DB.remove("customers", id); renderCustomers(); } break;
+
+    // Expenses
+    case "new-expense": expenseFormModal(); break;
+    case "delete-expense": if (confirm("Expense delete karna hai?")) { await DB.remove("expenses", id); renderExpenses(); } break;
+
+    // Reports
+    case "set-range": App.reportRange = el.dataset.range; renderReports(); break;
+    case "apply-range": App.reportFrom = $("#rangeFrom").value; App.reportTo = $("#rangeTo").value; renderReports(); break;
+    case "export-sales-csv": await exportSalesCsv(); break;
+    case "reprint-sale": { const s = await DB.get("sales", id); if (s) Receipt.print(s); break; }
+    case "return-sale": await returnSale(id); break;
+
+    // Settings
+    case "export-backup": await exportBackup(); break;
+    case "test-print": Receipt.print({ id: "TEST", receiptNo: "TEST-0001", items: [{ name: "Sample Item", qty: 1, price: 100 }], subtotal: 100, discount: 0, total: 100, paymentMethod: "Cash", date: Date.now() }); break;
+
+    case "close-modal": closeModal(); break;
   }
-  if (restored) toast("Stock restored (" + restored + " item)");
-  else toast("Return saved (stock auto-match nahi hua)");
-}
+});
 
-/** IMEI / sold phone registry search */
-async function searchImeiRegistry() {
-  const q = await showPrompt("IMEI / Serial number", "", { title: "IMEI / Serial Search", okText: "Search" });
-  if (!q) return;
-  const qq = q.trim().toLowerCase();
-  const products = await DB.getAll("products");
-  const sales = await DB.getAll("sales");
-  const hits = [];
-  for (const p of products) {
-    if (p.imei && String(p.imei).toLowerCase().includes(qq)) {
-      hits.push("Product: " + p.name + " · Stock " + p.qty + (p.soldInvoice ? " · Sold " + p.soldInvoice : ""));
-    }
-  }
-  for (const s of sales) {
-    for (const it of (s.items || [])) {
-      const p = products.find((x) => x.id === it.id);
-      if (p && p.imei && String(p.imei).toLowerCase().includes(qq)) {
-        hits.push("Sale " + (s.invoiceNo || "") + " · " + (s.customerName || "") + " · " + it.name);
-      }
-    }
-  }
-  if (!hits.length) toast("No IMEI match");
-  else await showAlert(hits.slice(0, 15).join("\n"), { title: "IMEI Results" });
-}
-window.searchImeiRegistry = searchImeiRegistry;
-
-// ---------- Returns / Credit Notes ----------
-const returnsOpts = {
-  title: "Returns", store: "returns", activeTab: "reports",
-  emptyText: "No returns yet.",
-  fields: [
-    { key: "invoiceNo", label: "Original Invoice #" },
-    { key: "customerName", label: "Customer Name" },
-    { key: "item", label: "Item / Reason" },
-    { key: "amount", label: "Return Amount", type: "number" },
-    { key: "date", label: "Date", type: "date" },
-    { key: "status", label: "Status", type: "select", options: [
-      { value: "refunded", label: "Refunded" }, { value: "exchange", label: "Exchange" }, { value: "credit", label: "Store Credit" }
-    ] },
-  ],
-  renderRow: (r) => `<div class="list-row" onclick='editItem("returns","${r.id}", returnsOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--orange)">↩️</div>
-      <div><div class="l-title">${escapeHtml(r.customerName || r.invoiceNo || "")}</div>
-      <div class="l-sub">${escapeHtml(r.item || "")} · ${escapeHtml(r.date || "")}</div></div></div>
-    <div style="text-align:right"><div class="l-title">${fmt(r.amount)}</div>
-    <span class="pill warn">${escapeHtml(r.status || "")}</span></div></div>`
-};
-window.returnsOpts = returnsOpts;
-const renderReturns = moduleListPage(returnsOpts);
-
-// ---------- Staff & Roles ----------
-const staffOpts = {
-  title: "Staff", store: "staff", activeTab: "settings",
-  emptyText: "No staff added yet.",
-  fields: [
-    { key: "name", label: "Full Name" },
-    { key: "phone", label: "Phone (used as login username)" },
-    { key: "pin", label: "PIN / Password (used to login)" },
-    { key: "role", label: "Role", type: "select", options: [
-      { value: "cashier", label: "Cashier (Sales, Products, Customers)" },
-      { value: "manager", label: "Manager (Sales + Stock + Reports)" },
-      { value: "technician", label: "Technician (Repairs only)" },
-      { value: "admin", label: "Admin (Full access)" },
-    ] },
-    { key: "salary", label: "Monthly Salary", type: "number" },
-  ],
-  renderRow: (s) => `<div class="list-row" onclick='editItem("staff","${s.id}", staffOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--blue)">👨‍💼</div>
-      <div><div class="l-title">${escapeHtml(s.name)}</div><div class="l-sub">${escapeHtml(s.phone || "")} · ${escapeHtml(s.role || "cashier")}</div></div></div>
-    <button class="btn ghost" style="padding:6px 10px" onclick='event.stopPropagation();markAttendance("${s.id}","${escapeHtml(s.name)}")'>✓ Attend</button></div>`
-};
-window.staffOpts = staffOpts;
-const renderStaff = moduleListPage(staffOpts);
-window.markAttendance = async (staffId, name) => {
-  await DB.put("attendance", { staffId, name, date: todayKey(), time: new Date().toLocaleTimeString() });
-  toast(`Attendance marked for ${name}`);
-};
-
-// ---------- Purchase Orders (Suppliers) ----------
-const poOpts = {
-  title: "Purchase Orders", store: "purchaseOrders", activeTab: "settings",
-  emptyText: "No purchase orders yet.",
-  fields: [
-    { key: "supplierName", label: "Supplier Name" },
-    { key: "items", label: "Items (description)" },
-    { key: "amount", label: "Total Amount", type: "number" },
-    { key: "paid", label: "Amount Paid", type: "number", default: 0 },
-    { key: "status", label: "Status", type: "select", options: [
-      { value: "ordered", label: "Ordered" }, { value: "received", label: "Received" }, { value: "paid", label: "Paid" }
-    ] },
-  ],
-  renderRow: (o) => `<div class="list-row" onclick='editItem("purchaseOrders","${o.id}", poOpts)'>
-    <div class="l-left"><div class="dot" style="background:var(--red)">🚚</div>
-      <div><div class="l-title">${escapeHtml(o.supplierName)}</div><div class="l-sub">${escapeHtml(o.items || "")}</div></div></div>
-    <div style="text-align:right"><div class="l-title">${fmt(o.amount)}</div><span class="pill ${o.status === "paid" ? "ok" : "warn"}">${o.status}</span></div></div>`
-};
-window.poOpts = poOpts;
-const renderPurchaseOrders = moduleListPage(poOpts);
-
-// ---------- Cash Book / Daily Closing ----------
-async function renderCashbook() {
-  const [sales, expenses, po] = await Promise.all([DB.getAll("sales"), DB.getAll("expenses"), DB.getAll("purchaseOrders")]);
-  const byDay = {};
-  sales.forEach((s) => { const d = (s.date || "").slice(0, 10); byDay[d] = byDay[d] || { in: 0, out: 0 }; byDay[d].in += Number(s.total || 0); });
-  expenses.forEach((e) => { const d = e.date || ""; byDay[d] = byDay[d] || { in: 0, out: 0 }; byDay[d].out += Number(e.amount || 0); });
-  po.forEach((o) => { const d = todayKey(); byDay[d] = byDay[d] || { in: 0, out: 0 }; });
-  const days = Object.keys(byDay).sort().reverse();
-  const today = todayKey();
-  const t = byDay[today] || { in: 0, out: 0 };
-  const html = `
-  <div class="page">
-    <h2>Cash Book / Daily Closing</h2>
-    <div class="card" style="border:2px solid var(--blue)">
-      <div class="l-title">Today (${today})</div>
-      <div class="l-sub">Cash In: ${fmt(t.in)} · Cash Out: ${fmt(t.out)}</div>
-      <div style="font-weight:800;font-size:18px;margin-top:6px">Net: ${fmt(t.in - t.out)}</div>
-      <button class="btn full" id="day-close-print" style="margin-top:12px">🖨️ Print Day Close</button>
-    </div>
-    ${days.length ? days.map((d) => `
-      <div class="card">
-        <div class="l-title">${d}</div>
-        <div class="l-sub">Cash In: ${fmt(byDay[d].in)} · Cash Out: ${fmt(byDay[d].out)}</div>
-        <div style="font-weight:700;margin-top:4px">Net: ${fmt(byDay[d].in - byDay[d].out)}</div>
-      </div>`).join("") : `<div class="empty">No cash movements recorded yet.</div>`}
-  </div>`;
-  root.innerHTML = shell("settings", html);
-  document.getElementById("day-close-print").onclick = async () => {
+document.addEventListener("submit", async (e) => {
+  const form = e.target;
+  if (form.id === "loginForm") {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const email = fd.get("email").trim();
+    const password = fd.get("password");
+    const btn = $("#loginBtn");
+    btn.disabled = true; btn.textContent = "Signing in...";
     try {
-      await printDayClose(today, t);
-    } catch (e) { toast(e.message || "Print failed"); }
-  };
-}
-
-async function printDayClose(day, totals) {
-  const shopNameShort = (window.CFG && (CFG.shopNameShort || CFG.shopName)) || "SHOP POS";
-  const credit = window.creditFooter ? creditFooter() : "";
-  if (typeof ThermalPrinter === "undefined") {
-    // screen fallback
-    await showAlert("In: " + fmt(totals.in) + "\nOut: " + fmt(totals.out) + "\nNet: " + fmt(totals.in - totals.out), { title: "Day Close — " + day });
-    return;
-  }
-  const printer = window.shopPrinter || new ThermalPrinter({ paperWidth: 80 });
-  window.shopPrinter = printer;
-  if (!printer.isConnected) {
-    toast("Printer connect…");
-    await printer.connect();
-  }
-  await printer.init();
-  await printer.printText(shopNameShort, { align: "center", bold: true });
-  await printer.printText("DAY CLOSE", { align: "center", bold: true });
-  await printer.printText(day, { align: "center" });
-  await printer.printText("--------------------", { align: "center" });
-  await printer.printText("Cash In:  " + fmt(totals.in));
-  await printer.printText("Cash Out: " + fmt(totals.out));
-  await printer.printText("NET:      " + fmt(totals.in - totals.out), { bold: true });
-  await printer.printText("--------------------", { align: "center" });
-  if (credit) await printer.printSmall(credit, { align: "center" });
-  await printer.feed(1);
-  await printer.doCut();
-  toast("Day close printed");
-}
-
-// ---------- Audit Logs ----------
-async function renderAuditLogs() {
-  const logs = (await DB.getAll("auditLogs")).sort((a, b) => (b.ts || "").localeCompare(a.ts || "")).slice(0, 100);
-  const html = `
-  <div class="page">
-    <h2>Audit Logs</h2>
-    ${logs.length ? logs.map((l) => `
-      <div class="list-row"><div class="l-left"><div><div class="l-title">${escapeHtml(l.detail)}</div>
-        <div class="l-sub">${escapeHtml(l.by)} · ${escapeHtml((l.ts || "").replace("T", " ").slice(0, 19))}</div></div></div></div>`).join("")
-      : `<div class="empty">No activity logged yet.</div>`}
-  </div>`;
-  root.innerHTML = shell("settings", html);
-}
-
-// ---------- Boot ----------
-window.addEventListener("sm:queued", async () => {
-  window._pendingCount = await DB.pendingSyncCount();
-  updateSyncStatusBar();
-});
-window.addEventListener("sm:synced", async () => {
-  window._pendingCount = await DB.pendingSyncCount();
-  updateSyncStatusBar(); // do NOT router() — it wipes POS form inputs
-});
-window.addEventListener("online", () => updateSyncStatusBar());
-window.addEventListener("offline", () => updateSyncStatusBar());
-
-function updateSyncStatusBar() {
-  const el = document.querySelector(".sync-status");
-  if (!el || !state.user) return;
-  const pending = window._pendingCount || 0;
-  el.textContent = (navigator.onLine ? "🟢 Online" : "🟠 Offline")
-    + (pending ? " · " + pending + " pending sync" : " · synced")
-    + " · " + (state.user.role || "admin");
-}
-
-(async function boot() {
-  await tryRestoreSession();
-  window._pendingCount = await DB.pendingSyncCount();
-  router();
-  // Daily backup reminder (once per calendar day)
-  try {
-    const last = localStorage.getItem("sm_last_backup_day");
-    const day = todayKey();
-    if (state.user && last !== day) {
-      setTimeout(async () => {
-        const okBackup = await showConfirm("Shop data JSON download ho jaye?", { title: "Daily Backup", okText: "Backup Now" });
-        if (okBackup) await backupNow();
-        localStorage.setItem("sm_last_backup_day", day);
-      }, 2500);
+      let user;
+      if (window.SMSync && SMSync.isConfigured()) {
+        user = await SMSync.signIn(email, password);
+        user = { email: user.email, uid: user.uid };
+      } else {
+        user = await localSignIn(email, password);
+      }
+      App.user = user;
+      await DB.setMeta("session", user);
+      toast("Khush aamdeed! 🎉", "ok");
+      location.hash = "#/dashboard";
+      render();
+    } catch (err) {
+      toast(err.message || "Login fail ho gaya.", "bad");
+    } finally {
+      btn.disabled = false; btn.textContent = "↪  Login";
     }
-  } catch (e) {}
-})();
+  }
+
+  if (form.id === "signupForm") {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const email = fd.get("email").trim();
+    const password = fd.get("password");
+    const name = fd.get("name").trim();
+    try {
+      let user;
+      if (window.SMSync && SMSync.isConfigured()) {
+        user = await SMSync.signUp(email, password);
+        user = { email: user.email, uid: user.uid, name };
+      } else {
+        user = await localSignUp(email, password, name);
+      }
+      App.user = user;
+      await DB.setMeta("session", user);
+      toast("Account ban gaya, khush aamdeed! 🎉", "ok");
+      location.hash = "#/dashboard";
+      render();
+    } catch (err) {
+      toast(err.message || "Signup fail ho gaya.", "bad");
+    }
+  }
+
+  if (form.id === "productForm") { e.preventDefault(); await saveProductForm(form); }
+
+  if (form.id === "supplierForm") {
+    e.preventDefault();
+    const fd = new FormData(form);
+    await DB.put("suppliers", { id: fd.get("id") || uid(), name: fd.get("name").trim(), phone: fd.get("phone").trim(), address: fd.get("address").trim() });
+    closeModal(); toast("Supplier save ho gaya."); renderSuppliers();
+  }
+
+  if (form.id === "customerForm") {
+    e.preventDefault();
+    const fd = new FormData(form);
+    await DB.put("customers", { id: fd.get("id") || uid(), name: fd.get("name").trim(), phone: fd.get("phone").trim() });
+    closeModal(); toast("Customer save ho gaya."); renderCustomers();
+  }
+
+  if (form.id === "expenseForm") {
+    e.preventDefault();
+    const fd = new FormData(form);
+    await DB.put("expenses", {
+      id: uid(), title: fd.get("title").trim(), category: fd.get("category").trim(),
+      amount: Number(fd.get("amount")) || 0, date: new Date(fd.get("date")).getTime() || Date.now()
+    });
+    closeModal(); toast("Expense save ho gaya."); renderExpenses();
+  }
+});
+
+document.addEventListener("input", (e) => {
+  if (e.target.id === "posDiscount") renderCart();
+});
+
+window.addEventListener("hashchange", render);
+window.addEventListener("sm:synced", () => { if (App.user) render(); });
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  window.deferredInstallPrompt = e;
+});
+
+/* ---------------------------------------------------------------------- */
+/* Boot                                                                     */
+/* ---------------------------------------------------------------------- */
+
+async function boot() {
+  await ensureLocalAdmin();
+  const session = await DB.getMeta("session");
+  if (session) App.user = session;
+
+  if (window.SMSync) {
+    window.addEventListener("sm:synced", () => {}); // placeholder for future hooks
+  }
+
+  if (!location.hash) location.hash = "#/dashboard";
+  render();
+}
+
+boot();

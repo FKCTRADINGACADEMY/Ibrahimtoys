@@ -1,30 +1,42 @@
-/**
- * Sheeraz Apple Point — Kamber
- * Firebase project: sheeraz-apple-point
- */
-window.SHOP_CONFIG = {
-  shopName: "Sheeraz Apple Point",
-  shopNameShort: "SHEERAZ APPLE POINT",
-  shopTagline: "KAMBER · BHUTTO CHOWK",
-  shopSubtitle: "Mobiles · Accessories · Repairs · Service",
-  phone: "03100014727",
-  address: "Ali Khan Mirzani Center, Bhutto Chowk, Kamber",
-  ownerName: "Sheeraz Ali",
-  creditLine: "Software By Fazul Khan Chandio",
-  creditPhone: "03333909816",
+/* =========================================================================
+   js/config.js — Ibrahim Toy & Costomestic Shop
+   -------------------------------------------------------------------------
+   1) Sync ka istemal (cloud sync) chahiye to Firebase Console se project
+      banayen -> Project settings -> General -> "Your apps" -> Web app ->
+      config nikal ke neeche paste karen.
+   2) Agar filhal Firebase nahi lagana, kuch mat badlen — app offline mode
+      me poora kaam karega (bill, stock, profit/loss sab local save hoga),
+      bas doosre device se data sync nahi hoga jab tak keys na daalen.
+   ========================================================================= */
 
-  shopId: "sheeraz-apple-point",
+window.CFG = {
+  // Shop identity (dikhne wala naam / logo)
+  shopName: "Ibrahim Toy & Costomestic Shop",
+  shopTagline: "Toys for Fun, Beauty for Everyone",
+  shopLogo: "assets/logo.png",
+  currency: "PKR",
+  currencySymbol: "Rs.",
 
+  // Firebase project config — replace with YOUR project's values.
+  // Firebase Console > Project settings > General > Your apps > SDK setup
   firebase: {
-    apiKey: "AIzaSyCiZlQNNahbM8dMg5KlS_WDOL0x0NTZiCs",
-    authDomain: "sheeraz-apple-point.firebaseapp.com",
-    projectId: "sheeraz-apple-point",
-    storageBucket: "sheeraz-apple-point.firebasestorage.app",
-    messagingSenderId: "786751552575",
-    appId: "1:786751552575:web:3cea064213b5e8e9180c8a"
-  }
-};
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  },
 
-window.CFG = window.SHOP_CONFIG;
-window.creditFooter = () =>
-  (CFG.creditLine || "") + (CFG.creditPhone ? " · " + CFG.creditPhone : "");
+  // Cloud data path — har shop ka data isolate rehta hai is path ke neeche.
+  // Ek hi Firebase project me kai shops chalani hon to alag shopId use karen.
+  shopId: "ibrahim-toy-cosmetic",
+
+  // Low-stock alert threshold (dashboard par warning ke liye), per-product
+  // override "lowStockAt" field se ho sakta hai.
+  defaultLowStockThreshold: 5,
+
+  // Thermal receipt printer paper width: "58mm" ya "80mm"
+  receiptPaperWidth: "80mm",
+  receiptFooterNote: "Shukriya! Dobara tashreef laayen."
+};
