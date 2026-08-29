@@ -92,23 +92,21 @@ function renderAll() {
 
 function renderStats() {
   const total = allProducts.length;
-  const toys = allProducts.filter((p) => p.category === "Toys").length;
-  const cosmetics = allProducts.filter((p) => p.category === "Cosmetics").length;
   const low = allProducts.filter((p) => Number(p.stock) <= Number(p.threshold)).length;
-  const value = allProducts.reduce((sum, p) => sum + Number(p.cost || 0) * Number(p.stock || 0), 0);
+  const valueCost = allProducts.reduce((sum, p) => sum + Number(p.cost || 0) * Number(p.stock || 0), 0);
+  const valueRetail = allProducts.reduce((sum, p) => sum + Number(p.price || 0) * Number(p.stock || 0), 0);
 
   document.getElementById("statTotal").textContent = total;
-  document.getElementById("statToys").textContent = toys;
-  document.getElementById("statCosmetics").textContent = cosmetics;
   document.getElementById("statLow").textContent = low;
-  document.getElementById("statValue").textContent = "Rs. " + value.toLocaleString("en-PK", { maximumFractionDigits: 0 });
+  document.getElementById("statValue").textContent = "Rs. " + valueCost.toLocaleString("en-PK", { maximumFractionDigits: 0 });
+  document.getElementById("statValueRetail").textContent = "Rs. " + valueRetail.toLocaleString("en-PK", { maximumFractionDigits: 0 });
 }
 
 function renderLowStock() {
   const wrap = document.getElementById("lowStockList");
   const lows = allProducts.filter((p) => Number(p.stock) <= Number(p.threshold));
   if (lows.length === 0) {
-    wrap.innerHTML = '<div class="empty-state"><h4>Sab stock theek hai 🎉</h4><p>Koi item low stock mein nahi hai.</p></div>';
+    wrap.innerHTML = '<div class="empty-state"><h4>Sab stock theek hai 👍</h4><p>Koi item low stock mein nahi hai.</p></div>';
     return;
   }
   wrap.innerHTML = lows

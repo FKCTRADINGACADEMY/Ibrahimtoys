@@ -465,6 +465,8 @@ function renderSalesOverviewStats() {
   if (elProfit) elProfit.textContent = money(profitToday);
   if (elCount) elCount.textContent = todaySales.length;
 
+  renderWeekChart();
+
   const recentWrap = document.getElementById("recentSalesList");
   if (recentWrap) {
     const recent = allSales.slice(0, 5);
@@ -483,6 +485,48 @@ function renderSalesOverviewStats() {
     }
   }
 }
+
+function renderWeekChart() {
+  const chart = document.getElementById("weekChart");
+  if (!chart) return;
+
+  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const today = new Date();
+  const totals = new Array(7).fill(0);
+  const dayKeys = []; // ISO date string for each of the last 7 days, oldest first
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    dayKeys.push(d.toDateString());
+  }
+
+  allSales.forEach((s) => {
+    if (!s.createdAt) return;
+    const d = s.createdAt.toDate ? s.createdAt.toDate() : new Date(s.createdAt);
+    const idx = dayKeys.indexOf(d.toDateString());
+    if (idx !== -1) totals[idx] += Number(s.total || 0);
+  });
+
+  const max = Math.max(...totals, 1);
+
+  chart.innerHTML = dayKeys
+    .map((key, i) => {
+      const d = new Date(key);
+      const pct = Math.max(4, Math.round((totals[i] / max) * 100));
+      return `
+      <div class="week-chart-col" title="${money(totals[i])}">
+        <div class="week-chart-bar" style="height:${pct}%;"></div>
+        <div class="week-chart-day">${dayLabels[d.getDay()]}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+document.getElementById("viewAllSalesLink")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  document.querySelector('.nav-item[data-view="sales"]')?.click();
+});
 
 renderCart(); // initial empty-state render
 
