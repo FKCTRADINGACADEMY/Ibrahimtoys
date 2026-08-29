@@ -287,7 +287,7 @@ function renderLogin() {
       <h1 class="login-shop-name">${esc(cfg.shopName || "Shop")}</h1>
       <p class="login-tagline">${esc(cfg.shopTagline || "")}</p>
 
-      <form id="loginForm" class="login-form">
+      <form id="loginForm" class="login-form" novalidate>
         <label class="field">
           <span class="field-ic">👤</span>
           <input type="text" name="email" placeholder="Email or Phone" autocomplete="username" required />
@@ -308,7 +308,7 @@ function renderLogin() {
 
       <button class="btn btn-outline btn-block btn-lg" data-action="show-signup">➕&nbsp; Create New Account</button>
 
-      <form id="signupForm" class="login-form hidden">
+      <form id="signupForm" class="login-form hidden" novalidate>
         <label class="field">
           <span class="field-ic">🏷</span>
           <input type="text" name="name" placeholder="Your Name" required/>
@@ -837,7 +837,7 @@ function productFormModal(product) {
   const p = product || { name: "", category: "", sku: "", costPrice: 0, sellPrice: 0, stock: 0, unit: "pcs", lowStockAt: (window.CFG && CFG.defaultLowStockThreshold) || 5 };
   openModal(`
     <h3>${product ? "Edit" : "Add"} Product</h3>
-    <form id="productForm">
+    <form id="productForm" novalidate>
       <input type="hidden" name="id" value="${p.id || ""}"/>
       <label class="mini-label">Name</label>
       <input class="input" name="name" required value="${esc(p.name)}"/>
@@ -1044,7 +1044,7 @@ function supplierFormModal(rec) {
   const r = rec || { name: "", phone: "", address: "" };
   openModal(`
     <h3>${rec ? "Edit" : "Add"} Supplier</h3>
-    <form id="supplierForm">
+    <form id="supplierForm" novalidate>
       <input type="hidden" name="id" value="${r.id || ""}"/>
       <label class="mini-label">Name</label><input class="input" name="name" required value="${esc(r.name)}"/>
       <label class="mini-label">Phone</label><input class="input" name="phone" value="${esc(r.phone || "")}"/>
@@ -1059,7 +1059,7 @@ function customerFormModal(rec) {
   const r = rec || { name: "", phone: "" };
   openModal(`
     <h3>${rec ? "Edit" : "Add"} Customer</h3>
-    <form id="customerForm">
+    <form id="customerForm" novalidate>
       <input type="hidden" name="id" value="${r.id || ""}"/>
       <label class="mini-label">Name</label><input class="input" name="name" required value="${esc(r.name)}"/>
       <label class="mini-label">Phone</label><input class="input" name="phone" value="${esc(r.phone || "")}"/>
@@ -1074,7 +1074,7 @@ function expenseFormModal(rec) {
   const dateVal = r.date ? new Date(r.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
   openModal(`
     <h3>${rec ? "Edit" : "Add"} Expense</h3>
-    <form id="expenseForm">
+    <form id="expenseForm" novalidate>
       <input type="hidden" name="id" value="${r.id || ""}"/>
       <label class="mini-label">Title</label><input class="input" name="title" required placeholder="e.g. Shop Rent" value="${esc(r.title || "")}"/>
       <label class="mini-label">Category</label><input class="input" name="category" placeholder="Rent / Bills / Salary / Other" value="${esc(r.category || "")}"/>
