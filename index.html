@@ -19,51 +19,51 @@
 </head>
 <body>
 
-<div class="login-wrap">
-  <div class="login-art">
-    <div class="brand-mark">Ibrahim Toys &amp; Cosmetics</div>
-    <h1>Ek shelf par<br>saara stock.</h1>
-    <p>Inventory management jo dukaan ke andar bhi chale, internet ke bina bhi — jaise hi connection wapas aaye, sab kuch khud sync ho jata hai.</p>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">🧸💄</div>
+    <h1 class="auth-title">Ibrahim Toy &amp;<br>Cosmetic Shop</h1>
+    <p class="auth-tagline">Toys for Fun, Beauty for Everyone</p>
 
-    <div class="shelf-illustration">
-      <div class="shelf-row">
-        <span class="label">Toys</span>
-        <div class="shelf-track"><div class="shelf-fill" style="width:72%; background:#F5A623;"></div></div>
+    <div id="loginError" class="login-error"></div>
+
+    <form id="loginForm">
+      <div class="auth-field">
+        <span class="auth-field-icon">👤</span>
+        <input type="email" id="email" required autocomplete="username" placeholder="admin@ibrahimtoys.com">
       </div>
-      <div class="shelf-row">
-        <span class="label">Cosmetics</span>
-        <div class="shelf-track"><div class="shelf-fill" style="width:45%; background:#D98A96;"></div></div>
+      <div class="auth-field">
+        <span class="auth-field-icon">🔒</span>
+        <input type="password" id="password" required autocomplete="current-password" placeholder="••••••••">
+        <button type="button" class="auth-field-eye" id="togglePasswordBtn" aria-label="Show password">👁</button>
       </div>
-      <div class="shelf-row">
-        <span class="label">Low stock</span>
-        <div class="shelf-track"><div class="shelf-fill" style="width:18%; background:#E0555F;"></div></div>
+
+      <div class="auth-row">
+        <label class="auth-checkbox">
+          <input type="checkbox" id="rememberMe" checked>
+          Remember Me
+        </label>
+        <a href="#" id="forgotPasswordLink">Forgot Password?</a>
       </div>
+
+      <button type="submit" class="btn btn-gradient" id="loginBtn">↪ Login</button>
+    </form>
+
+    <div class="auth-divider"><span>OR</span></div>
+
+    <button type="button" class="btn btn-outline-block" id="createAccountBtn">+ Create New Account</button>
+
+    <div class="auth-features">
+      <div class="auth-feature"><span>🛡️</span><strong>Secure Login</strong><small>Your data is safe with us</small></div>
+      <div class="auth-feature"><span>🛍️</span><strong>Quality Products</strong><small>Toys &amp; Cosmetics best quality</small></div>
+      <div class="auth-feature"><span>🎧</span><strong>24/7 Support</strong><small>We are here to help you</small></div>
     </div>
-  </div>
 
-  <div class="login-panel">
-    <div class="login-card">
-      <div class="eyebrow">Admin Panel</div>
-      <h2 class="display">Sign in to continue</h2>
-
-      <div id="loginError" class="login-error"></div>
-
-      <form id="loginForm">
-        <div class="field">
-          <label for="email">Email</label>
-          <input type="email" id="email" required autocomplete="username" placeholder="admin@ibrahimtoys.com">
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input type="password" id="password" required autocomplete="current-password" placeholder="••••••••">
-        </div>
-        <button type="submit" class="btn btn-primary" id="loginBtn">Login</button>
-      </form>
-
-      <div class="login-foot">Sirf shop admin ke liye — koi customer signup nahi.</div>
-    </div>
+    <div class="auth-footer" id="authFooter">© Ibrahim Toy &amp; Cosmetic Shop · All Rights Reserved</div>
   </div>
 </div>
+
+<div class="toast" id="authToast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -71,6 +71,9 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/auth.js"></script>
 <script>
+  document.getElementById("authFooter").textContent =
+    "© " + new Date().getFullYear() + " Ibrahim Toy & Cosmetic Shop · All Rights Reserved";
+
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
   }

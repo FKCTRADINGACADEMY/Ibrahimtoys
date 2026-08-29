@@ -58,6 +58,7 @@
         <h1 class="page-title" id="pageTitle">Overview</h1>
       </div>
       <div class="topbar-right">
+        <span class="topbar-user">👋 <span id="currentUserEmail"></span></span>
         <span class="status-pill" id="statusPill"><span class="blip"></span> Online</span>
         <button class="btn btn-ghost btn-sm" id="installBtn" style="display:none;">⭳ Install App</button>
         <button class="icon-btn" id="themeToggle" title="Toggle theme">
@@ -68,45 +69,42 @@
 
     <!-- OVERVIEW VIEW -->
     <section id="view-overview" class="view-section">
-      <div class="stat-grid">
+      <div class="stat-grid-2col">
         <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--ink)"></span> Total Products</div>
-          <div class="stat-value" id="statTotal">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--toy-amber)"></span> Toys</div>
-          <div class="stat-value" id="statToys">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--cosmetic-rose)"></span> Cosmetics</div>
-          <div class="stat-value" id="statCosmetics">0</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--danger)"></span> Low Stock</div>
-          <div class="stat-value" id="statLow">0</div>
-        </div>
-      </div>
-
-      <div class="stat-grid" style="grid-template-columns: 1fr;">
-        <div class="stat-card">
-          <div class="stat-label">Total Stock Value (cost price)</div>
-          <div class="stat-value" id="statValue">Rs. 0</div>
-        </div>
-      </div>
-
-      <div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
-        <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--success)"></span> Today's Sales</div>
+          <div class="stat-icon-box" style="background:#EDE7FB;">🧾</div>
           <div class="stat-value" id="statTodaySales">Rs. 0</div>
+          <div class="stat-label-plain">Today's Sales</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--toy-amber)"></span> Today's Profit</div>
-          <div class="stat-value" id="statTodayProfit">Rs. 0</div>
+          <div class="stat-icon-box" style="background:#E1F3E8;">📈</div>
+          <div class="stat-value" style="color:var(--success);" id="statTodayProfit">Rs. 0</div>
+          <div class="stat-label-plain">Today's Profit</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><span class="stat-swatch" style="background:var(--cosmetic-rose)"></span> Invoices Today</div>
-          <div class="stat-value" id="statTodayInvoices">0</div>
+          <div class="stat-icon-box" style="background:#F6E0E3;">📦</div>
+          <div class="stat-value" id="statValue">Rs. 0</div>
+          <div class="stat-label-plain">Stock Value (cost)</div>
         </div>
+        <div class="stat-card">
+          <div class="stat-icon-box" style="background:#FDE8C8;">🏷️</div>
+          <div class="stat-value" id="statValueRetail">Rs. 0</div>
+          <div class="stat-label-plain">Stock Value (retail)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon-box" style="background:#FBE4E5;">⚠️</div>
+          <div class="stat-value" id="statLow">0</div>
+          <div class="stat-label-plain">Low Stock Items</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon-box" style="background:#EDE7FB;">🧸</div>
+          <div class="stat-value" id="statTotal">0</div>
+          <div class="stat-label-plain">Total Products</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:28px; padding:22px 20px;">
+        <h3 style="margin-bottom:18px;">Last 7 Days Sales</h3>
+        <div id="weekChart" class="week-chart"></div>
       </div>
 
       <div class="panel" style="margin-bottom:28px;">
@@ -115,7 +113,7 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h3>Recent Sales</h3></div>
+        <div class="panel-head"><h3>Recent Sales</h3><a href="#" class="panel-link" id="viewAllSalesLink">View All →</a></div>
         <div id="recentSalesList"></div>
       </div>
     </section>

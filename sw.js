@@ -6,7 +6,7 @@
 // separately handles the actual product DATA offline/online sync.
 // ============================================================
 
-const CACHE_VERSION = "ibrahim-toys-v2";
+const CACHE_VERSION = "ibrahim-toys-v3";
 
 const PRECACHE_URLS = [
   "./",
