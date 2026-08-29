@@ -106,6 +106,7 @@ window.SMSync = {
       const col = this._col(store);
       const unsub = col.onSnapshot(
         async (snap) => {
+          let changed = false;
           for (const change of snap.docChanges()) {
             const data = change.doc.data();
             if (!data || !data.id) continue;
@@ -113,9 +114,10 @@ window.SMSync = {
             const local = await DB.get(store, data.id);
             if (!local || (data.updatedAt || 0) >= (local.updatedAt || 0)) {
               await this._putLocalOnly(store, data);
+              changed = true;
             }
           }
-          window.dispatchEvent(new CustomEvent("sm:synced"));
+          if (changed) window.dispatchEvent(new CustomEvent("sm:synced"));
         },
         (err) => console.warn("[SMSync] Listener", store, err)
       );
@@ -192,7 +194,7 @@ window.SMSync = {
           console.warn("[SMSync] item fail", item.id, err);
         }
       }
-      window.dispatchEvent(new CustomEvent("sm:synced"));
+      if (batch.length > 0) window.dispatchEvent(new CustomEvent("sm:synced"));
     } finally {
       this._flushing = false;
     }
@@ -279,4 +281,4 @@ setInterval(() => {
   if (navigator.onLine && window.SMSync && SMSync.isReady() && SMSync.currentUser()) {
     SMSync.flushQueue().catch(() => {});
   }
-}, 400);
+}, 3000);
