@@ -29,6 +29,9 @@ const VIEW_TITLES = {
   billing: "Billing / POS",
   inventory: "Inventory",
   sales: "Sales History",
+  bestsellers: "Best Sellers",
+  offers: "Offers",
+  customers: "Customers",
 };
 
 document.querySelectorAll(".nav-item").forEach((btn) => {

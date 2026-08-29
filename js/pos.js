@@ -257,6 +257,11 @@ document.getElementById("checkoutBtn")?.addEventListener("click", async () => {
 
     showToast("Sale complete ho gayi" + (navigator.onLine ? "." : " — offline, sync hoga jab internet aayega."));
 
+    // Auto-save/update the customer record if a phone number was given (extra.js).
+    if (typeof upsertCustomerFromSale === "function") {
+      upsertCustomerFromSale(sale);
+    }
+
     // Show + print invoice using local timestamp (serverTimestamp resolves later)
     openInvoiceModal({ ...sale, createdAt: new Date() }, true);
 

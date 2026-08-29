@@ -94,6 +94,11 @@ function requireAuth(onReady) {
     } else {
       const emailEl = document.getElementById("currentUserEmail");
       if (emailEl) emailEl.textContent = user.email;
+      const bannerEl = document.getElementById("bannerUserName");
+      if (bannerEl) {
+        const namePart = (user.email || "Admin").split("@")[0];
+        bannerEl.textContent = namePart.charAt(0).toUpperCase() + namePart.slice(1) + " 👋";
+      }
       onReady(user);
     }
   });
