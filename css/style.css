@@ -1,5 +1,5 @@
 /* =========================================================================
-   css/style.css — Ibrahim Toy & Costomestic Shop
+   css/style.css — Ibrahim Toy & Cosmetic Shop
    ========================================================================= */
 
 :root {
@@ -253,6 +253,24 @@ a { color: var(--violet); text-decoration: none; }
 .toast-ok { background: #14532d; }
 .toast-bad { background: #7f1d1d; }
 .toast-warn { background: #78350f; }
+
+/* ---------- Sales badges / change ---------- */
+.badge-ret {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 6px; background: #fee2e2; color: #b91c1c; vertical-align: middle;
+}
+.badge-ok {
+  display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 6px; background: #dcfce7; color: #15803d;
+}
+.row-returned { opacity: .65; }
+.row-returned td { text-decoration: line-through; }
+.row-returned .row-actions, .row-returned .badge-ret { text-decoration: none; }
+.change-box { margin: 6px 0 10px; font-size: 13px; min-height: 18px; }
+.good-text { color: var(--good); }
+.warn-text { color: var(--warn); }
+.cart-count { font-weight: 600; color: var(--muted); font-size: 0.9em; }
+.btn-sm { padding: 6px 10px; font-size: 12px; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 980px) {
