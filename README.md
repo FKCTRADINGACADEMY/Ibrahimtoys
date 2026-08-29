@@ -3,14 +3,19 @@
 Modern, offline-first POS (Point of Sale) and inventory management app. Sirf shop admin login kar sakta hai (koi customer signup nahi). Firestore ki offline persistence ki wajah se dukaan mein internet na ho tab bhi kaam karta hai — jaise hi connection wapas aata hai, sab data (stock + sales) khud-ba-khud sync ho jata hai.
 
 ## Features
-- Admin-only login (email + password)
+- Admin-only login (email + password), with the shop's real logo on the login/dashboard screens
+- Colorful, card-based dashboard redesign (gradient welcome banner, icon stat cards, gradient sidebar with active-item highlight)
 - **Billing / POS screen** — product picker, cart, quantity control, discount, customer name/phone, payment method (Cash / Card / EasyPaisa / JazzCash / Bank Transfer)
+- **Offers / Discounts** — create % discount offers (with optional code, category, active/inactive), apply them straight to a sale from the POS screen with one tap
 - **Invoice generation & printing** — auto invoice number, printable receipt, reprint anytime from Sales History
 - **Auto stock deduction** on every sale (and auto restock if an invoice is deleted)
+- **Customer records** — add customers manually, or let the app auto-save them from POS checkout (by phone number); each customer card shows live order count & total spent
+- **Best Sellers** — ranked list of top-selling products, filterable by All-time / 30 days / 7 days
+- **Notifications** — bell icon in the topbar with a live badge for low-stock alerts and today's sales
 - **Sales History** — search by invoice #/customer, filter by date, view/reprint/delete any invoice
 - Add / edit / delete products, Toys aur Cosmetics categories
 - Real-time stock tracking + low-stock alerts
-- Dashboard: total products, category counts, low stock, stock value, today's sales, today's profit, invoices today, recent sales
+- Dashboard: total products, total customers, category counts, low stock, stock value, today's sales, today's profit, invoices today, recent sales
 - Offline support (Firestore local cache, auto-sync) — billing works even with no internet, sales queue up and sync later
 - Search + category filters
 - Light/Dark mode
@@ -26,8 +31,11 @@ ibrahim-toys-cosmetics/
 ├── js/
 │   ├── firebase-config.js
 │   ├── auth.js
-│   └── inventory.js
-├── firestore.rules      # Security rules (admin-only access)
+│   ├── inventory.js
+│   ├── pos.js
+│   └── extra.js          # Notifications, Best Sellers, Offers, Customers
+├── img/                   # In-app logo (login card, sidebar brand)
+├── firestore.rules      # Security rules (admin-only access, incl. offers & customers)
 ├── manifest.json         # PWA manifest (installable app)
 ├── sw.js                 # Service worker (offline app-shell cache)
 ├── favicon.ico
