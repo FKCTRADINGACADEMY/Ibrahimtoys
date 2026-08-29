@@ -24,7 +24,7 @@ if (loginForm) {
     loginBtn.textContent = "Signing in...";
 
     try {
-      await auth.signInWithPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
       await auth.signInWithEmailAndPassword(email, password);
       window.location.href = "dashboard.html";
     } catch (err) {

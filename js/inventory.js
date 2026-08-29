@@ -24,14 +24,22 @@ document.getElementById("menuToggle")?.addEventListener("click", () => {
   document.getElementById("sidebar").classList.toggle("open");
 });
 
+const VIEW_TITLES = {
+  overview: "Overview",
+  billing: "Billing / POS",
+  inventory: "Inventory",
+  sales: "Sales History",
+};
+
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     const view = btn.dataset.view;
-    document.getElementById("view-overview").style.display = view === "overview" ? "" : "none";
-    document.getElementById("view-inventory").style.display = view === "inventory" ? "" : "none";
-    document.getElementById("pageTitle").textContent = view === "overview" ? "Overview" : "Inventory";
+    document.querySelectorAll(".view-section").forEach((sec) => {
+      sec.style.display = sec.id === "view-" + view ? "" : "none";
+    });
+    document.getElementById("pageTitle").textContent = VIEW_TITLES[view] || view;
     document.getElementById("sidebar").classList.remove("open");
   });
 });

@@ -26,3 +26,4 @@ db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
 });
 
 const PRODUCTS_COLLECTION = "products";
+const SALES_COLLECTION = "sales";
