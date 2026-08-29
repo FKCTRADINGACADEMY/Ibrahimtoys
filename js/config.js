@@ -17,23 +17,14 @@ window.CFG = {
   currency: "PKR",
   currencySymbol: "Rs.",
 
-  // Firebase project config — DISABLED for now.
-  // The previous config pointed to a DIFFERENT shop's Firebase project
-  // ("sheeraz-apple-point"), which caused silent permission-denied errors
-  // and blocked saves. Left as placeholders below so the app runs fully
-  // offline/local (all data saves to this device's IndexedDB — billing,
-  // stock, customers, profit/loss all work normally).
-  //
-  // To re-enable cloud sync later: create YOUR OWN Firebase project at
-  // https://console.firebase.google.com, enable Firestore + Email/Password
-  // Auth, then paste that project's own web-app config here.
+  // Firebase project config — apni khud ki project (ibrahim-toyss)
   firebase: {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT",
-    storageBucket: "YOUR_PROJECT.firebasestorage.app",
-    messagingSenderId: "000000000000",
-    appId: "1:000000000000:web:0000000000000000000000"
+    apiKey: "AIzaSyCIUPeHupaMVlAiTkbhK0pHhYgq2VCa4JQ",
+    authDomain: "ibrahim-toyss.firebaseapp.com",
+    projectId: "ibrahim-toyss",
+    storageBucket: "ibrahim-toyss.firebasestorage.app",
+    messagingSenderId: "193122158503",
+    appId: "1:193122158503:web:93d87be863c349004ad882"
   },
 
   // Cloud data path — har shop ka data isolate rehta hai is path ke neeche.
