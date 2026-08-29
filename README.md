@@ -1,111 +1,106 @@
-# Ibrahim Toy & Costomestic Shop — POS + Inventory Software
+# Ibrahim Toys & Cosmetics — Inventory Management
 
-Modern, installable (PWA) shop software: login/dashboard, POS billing, wholesale
-stock-in, product/supplier/customer records, expenses, profit/loss reports, aur
-thermal printer receipt printing. Firebase se cloud sync optional hai — Firebase
-ke bina bhi (offline mode) poora software chalta hai.
+Modern, offline-first inventory management app. Sirf shop admin login kar sakta hai (koi customer signup nahi). Firestore ki offline persistence ki wajah se dukaan mein internet na ho tab bhi kaam karta hai — jaise hi connection wapas aata hai, sab data khud-ba-khud sync ho jata hai.
 
-## 1. Firebase lagana (cloud sync ke liye — optional)
+## Features
+- Admin-only login (email + password)
+- Add / edit / delete products
+- Toys aur Cosmetics categories
+- Real-time stock tracking + low-stock alerts
+- Offline support (Firestore local cache, auto-sync)
+- Search + category filters
+- Dashboard: total products, category counts, low stock, total stock value
+- Light/Dark mode
+- Fully responsive (mobile/tablet/desktop)
+- **Installable PWA** — phone/laptop par app ki tarah install ho sakta hai, apna icon aur offline app-shell ke sath
 
-1. https://console.firebase.google.com par jaake naya project banayen.
-2. **Build > Authentication > Sign-in method** me "Email/Password" enable karen.
-3. **Build > Firestore Database** me database create karen (production mode).
-4. **Project settings (⚙️) > General > Your apps** me "Web app" (`</>`) add karen.
-5. Wahan se milne wala config object copy karen — ye kuch is tarah dikhta hai:
-   ```js
-   {
-     apiKey: "AIza...",
-     authDomain: "xxx.firebaseapp.com",
-     projectId: "xxx",
-     storageBucket: "xxx.appspot.com",
-     messagingSenderId: "...",
-     appId: "..."
-   }
-   ```
-6. Ye values `js/config.js` file me `firebase: {...}` ke andar paste kar den
-   (placeholder values `"YOUR_API_KEY"` waghera replace karen).
-7. **Firestore > Rules** me apne aap ko auth-only access den, misal:
-   ```
-   rules_version = '2';
-   service cloud.firestore {
-     match /databases/{database}/documents {
-       match /{document=**} {
-         allow read, write: if request.auth != null;
-       }
-     }
-   }
-   ```
-8. Save karen, publish karen. Ab jab app open hogi aur aap login/signup karenge
-   to data automatically Firebase Firestore me sync hoga (multi-device sync).
+## Project Structure
+```
+ibrahim-toys-cosmetics/
+├── index.html          # Login page
+├── dashboard.html       # Inventory dashboard (main app)
+├── css/style.css
+├── js/
+│   ├── firebase-config.js
+│   ├── auth.js
+│   └── inventory.js
+├── firestore.rules      # Security rules (admin-only access)
+├── manifest.json         # PWA manifest (installable app)
+├── sw.js                 # Service worker (offline app-shell cache)
+├── favicon.ico
+├── icons/                # App icons (all sizes, incl. maskable)
+└── README.md
+```
 
-**Agar filhal Firebase nahi lagana:** kuch mat karen — app offline mode me poora
-kaam karega (bill banana, stock, profit/loss sab kuch), sirf doosre device se
-sync nahi hoga. Default login: `admin` / `admin123` (Settings me se app ke andar
-"Create New Account" se naya user bhi bana sakte hain).
+No build step, no npm needed — sirf plain HTML/CSS/JS hai jo directly browser mein chalta hai.
 
-## 2. GitHub par upload karna
+---
 
-Ye pura folder (`shop/`) apne GitHub repo me upload kar den:
+## 1. Firebase Console Setup (zaroori — ek dafa karna hai)
+
+1. [Firebase Console](https://console.firebase.google.com/) kholein → project **ibrahim-toyss** select karein.
+2. **Build → Authentication → Get Started** → **Sign-in method** tab → **Email/Password** ko enable karein.
+3. **Authentication → Users → Add user** → apna admin email + password dalein. Yehi credentials login page par use hongi.
+4. **Build → Firestore Database → Create database** → production mode mein start karein (agar pehle se nahi bani).
+5. **Firestore → Rules** tab mein jaayein aur is repo ki `firestore.rules` file ka content paste karke **Publish** karein — is se sirf logged-in admin hi data padh/likh sakega.
+
+Bas! Ab app ready hai use karne ke liye.
+
+---
+
+## 2. GitHub Par Push Karna
+
+Terminal mein project folder ke andar jaake:
 
 ```bash
+cd ibrahim-toys-cosmetics
 git init
 git add .
-git commit -m "Ibrahim Toy & Costomestic Shop — POS software"
+git commit -m "Initial commit: Ibrahim Toys & Cosmetics inventory app"
 git branch -M main
-git remote add origin <your-repo-url>
+git remote add origin https://github.com/<aapka-username>/<repo-name>.git
 git push -u origin main
 ```
 
-Free hosting ke liye **GitHub Pages** use kar sakte hain:
-Repo → Settings → Pages → Branch: `main` → Save. Kuch minute me link mil jayega
-(e.g. `https://username.github.io/repo-name/`).
+> `<aapka-username>` aur `<repo-name>` apni GitHub repo ke mutabiq badal dein. Repo pehle GitHub par bana lein (empty repo, bina README ke).
 
-## 3. Software kaise use hoga
+---
 
-- **Login screen** — apka logo aur shop ka naam sath, email/password se login.
-- **Dashboard** — aaj ki sale, aaj ka profit, stock value, low-stock warnings,
-  pichle 7 din ka sales trend.
-- **Sell (POS)** — product par tap karen, cart me add hoga, discount/customer/
-  payment method choose kar ke **Checkout** karen — stock khud kam hoga aur
-  thermal printer receipt print hogi.
-- **Stock In (Wholesale)** — jab wholesale se maal aaye: supplier choose karen,
-  har item ka qty + wholesale cost + retail sell price add karen, **Save** karen
-  — stock khud badh jayega.
-- **Products** — sab items ki list, edit/delete, low-stock highlight hota hai.
-- **Suppliers / Customers** — contacts save karen.
-- **Expenses** — dukan ka kiraya, bill waghera add karen (profit/loss me minus hote hain).
-- **Reports** — Today / Week / Month / Custom date range — Revenue, Cost, Gross
-  Profit, Expenses, Net Profit, stock valuation, top-selling products, aur CSV
-  export.
-- **Settings** — sync status, manual sync, backup download/restore (JSON),
-  test print, app install button.
+## 3. Hosting / Deploy Karna (optional, free)
 
-## 4. Thermal printer
+### Option A — GitHub Pages (sabse aasan)
+1. GitHub repo → **Settings → Pages**
+2. Source: **Deploy from a branch** → Branch: `main` → folder: `/ (root)` → Save
+3. Kuch minute baad `https://<username>.github.io/<repo-name>/` par app live ho jayega.
 
-Checkout ya "reprint" par ek chota print-window khulti hai jo seedha print
-dialog laati hai (80mm paper default — `js/config.js` me `receiptPaperWidth`
-se `58mm` bhi kar sakte hain). Apka thermal printer (USB/Bluetooth/network)
-jo bhi phone/PC/POS terminal me "printer" ki tarah install ho, wahi print
-dialog me select kar len.
-
-## 5. App install karna (PWA)
-
-Chrome/Edge me address bar ke "Install" icon se, ya mobile par browser menu
-me "Add to Home Screen" se — ye software normal app ki tarah install ho jata
-hai, offline bhi chalta hai.
-
-## 6. File structure
-
+### Option B — Firebase Hosting
+```bash
+npm install -g firebase-tools
+firebase login
+firebase init hosting   # public directory: . (current folder), single-page app: No
+firebase deploy
 ```
-index.html
-manifest.json
-service-worker.js
-css/style.css
-js/config.js          ← Firebase keys + shop settings YAHAN dalen
-js/db.js               ← local storage (IndexedDB)
-js/firebase-sync.js    ← cloud sync engine
-js/thermal-printer.js  ← receipt printing
-js/app.js               ← poora app logic (login, POS, stock, reports)
-assets/logo.png
-icons/                  ← app icons (sab sizes, aapke logo se generate)
-```
+
+---
+
+## 4. Offline/Online Kaise Kaam Karta Hai
+
+- App load hote hi Firestore data local browser cache mein bhi save kar leta hai.
+- Agar internet chala jaye, aap phir bhi products add/edit/delete kar sakte hain — top bar par "Offline" status dikhega.
+- Jaise hi internet wapas aata hai, sab pending changes khud automatically Firebase server par sync ho jate hain — kuch alag se karne ki zaroorat nahi.
+
+## 5. App Install Karna (PWA)
+
+App ko phone ya laptop par ek real app ki tarah install kiya ja sakta hai — apna icon home screen/desktop par, apni window (browser address bar nahi), aur offline app khulne ki sahulat.
+
+> **Zaroori:** PWA install sirf HTTPS par kaam karta hai (GitHub Pages aur Firebase Hosting dono HTTPS par hi serve karte hain, to deploy karne ke baad ye khud kaam kar jayega). Localhost par bhi test ho sakta hai.
+
+- **Android (Chrome):** Site kholein → login karke dashboard par aayein → top bar mein **"⭳ Install App"** button dabayein, ya Chrome ke 3-dot menu → **Add to Home screen**.
+- **iPhone (Safari):** Site kholein → Share icon → **Add to Home Screen**.
+- **Desktop (Chrome/Edge):** Address bar ke end mein install icon (⊕) par click karein, ya dashboard ka **Install App** button use karein.
+
+Install hone ke baad app bina internet ke bhi khulega (app ka design/shell cached hota hai), aur products ka data offline add/edit hoke connection wapas aane par khud sync ho jata hai.
+
+## 6. Security Note
+
+`js/firebase-config.js` mein maujood Firebase config (apiKey waghera) publicly expose hona normal hai — Firebase web apps aisi hi kaam karti hain. Asal security **Firestore Rules** se aati hai (upar dekhein), jo ensure karti hai ke sirf logged-in admin hi data access kar sake. Isliye Authentication mein sirf apna trusted admin account hi add karein.

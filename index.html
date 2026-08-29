@@ -1,52 +1,78 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Ibrahim Toy & Cosmetic Shop</title>
-<meta name="description" content="POS, inventory, aur profit/loss software — Ibrahim Toy & Cosmetic Shop" />
-<meta name="theme-color" content="#6d28d9" />
-<link rel="manifest" href="manifest.json" />
-<link rel="icon" href="icons/favicon-32.png" />
-<link rel="apple-touch-icon" href="icons/icon-180.png" />
-<link rel="stylesheet" href="css/style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ibrahim Toys & Cosmetics — Admin Login</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1E1B4B">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ibrahim Toys">
 </head>
 <body>
-<div id="app"></div>
 
-<script src="js/config.js"></script>
-<script src="js/db.js"></script>
-<script src="js/firebase-sync.js"></script>
-<script src="js/thermal-printer.js"></script>
-<script src="js/app.js"></script>
+<div class="login-wrap">
+  <div class="login-art">
+    <div class="brand-mark">Ibrahim Toys &amp; Cosmetics</div>
+    <h1>Ek shelf par<br>saara stock.</h1>
+    <p>Inventory management jo dukaan ke andar bhi chale, internet ke bina bhi — jaise hi connection wapas aaye, sab kuch khud sync ho jata hai.</p>
+
+    <div class="shelf-illustration">
+      <div class="shelf-row">
+        <span class="label">Toys</span>
+        <div class="shelf-track"><div class="shelf-fill" style="width:72%; background:#F5A623;"></div></div>
+      </div>
+      <div class="shelf-row">
+        <span class="label">Cosmetics</span>
+        <div class="shelf-track"><div class="shelf-fill" style="width:45%; background:#D98A96;"></div></div>
+      </div>
+      <div class="shelf-row">
+        <span class="label">Low stock</span>
+        <div class="shelf-track"><div class="shelf-fill" style="width:18%; background:#E0555F;"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="login-panel">
+    <div class="login-card">
+      <div class="eyebrow">Admin Panel</div>
+      <h2 class="display">Sign in to continue</h2>
+
+      <div id="loginError" class="login-error"></div>
+
+      <form id="loginForm">
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" required autocomplete="username" placeholder="admin@ibrahimtoys.com">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" required autocomplete="current-password" placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn btn-primary" id="loginBtn">Login</button>
+      </form>
+
+      <div class="login-foot">Sirf shop admin ke liye — koi customer signup nahi.</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
 <script>
-  if (window.CFG && CFG.shopName) document.title = CFG.shopName;
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./service-worker.js").then((reg) => {
-        if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-        reg.addEventListener("updatefound", () => {
-          const nw = reg.installing;
-          if (!nw) return;
-          nw.addEventListener("statechange", () => {
-            if (nw.state === "installed" && navigator.serviceWorker.controller) {
-              nw.postMessage({ type: "SKIP_WAITING" });
-            }
-          });
-        });
-      }).catch(console.warn);
-
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (refreshing) return;
-        refreshing = true;
-        window.location.reload();
-      });
-    });
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
   }
 </script>
 </body>
