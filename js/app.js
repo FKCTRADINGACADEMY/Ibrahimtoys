@@ -1,16 +1,18 @@
 /* =========================================================================
-   js/app.js — Ibrahim Toy & Costomestic Shop · POS + Inventory + Reports
+   js/app.js — Ibrahim Toy & Cosmetic Shop · POS + Inventory + Reports
    ========================================================================= */
 
 const App = {
   user: null,
   cart: [],           // active POS cart: {productId,name,price,cost,qty,stock}
+  purchaseCart: [],
   editingReturnFor: null,
   reportRange: "today",
   reportFrom: null,
   reportTo: null,
   productFilter: "",
   categoryFilter: "",
+  salesFilter: "",
 };
 
 /* ---------------------------------------------------------------------- */
@@ -195,6 +197,7 @@ async function render() {
     pos: renderPOS,
     purchase: renderPurchase,
     products: renderProducts,
+    sales: renderSalesHistory,
     suppliers: renderSuppliers,
     customers: renderCustomers,
     expenses: renderExpenses,
@@ -224,6 +227,7 @@ async function renderShell(activeRoute) {
           ${navLink("pos", "🧾", "Sell (POS)", activeRoute)}
           ${navLink("purchase", "📦", "Stock In (Wholesale)", activeRoute)}
           ${navLink("products", "🧸", "Products", activeRoute)}
+          ${navLink("sales", "📋", "Sales History", activeRoute)}
           ${navLink("suppliers", "🚚", "Suppliers", activeRoute)}
           ${navLink("customers", "👤", "Customers", activeRoute)}
           ${navLink("expenses", "💸", "Expenses", activeRoute)}
@@ -257,8 +261,9 @@ function navLink(route, icon, label, active) {
 function navTitle(route) {
   const map = {
     dashboard: "Dashboard", pos: "Sell (POS)", purchase: "Stock In · Wholesale Purchase",
-    products: "Products & Inventory", suppliers: "Suppliers", customers: "Customers",
-    expenses: "Expenses", reports: "Reports & Profit / Loss", settings: "Settings"
+    products: "Products & Inventory", sales: "Sales History", suppliers: "Suppliers",
+    customers: "Customers", expenses: "Expenses", reports: "Reports & Profit / Loss",
+    settings: "Settings"
   };
   return map[route] || "";
 }
@@ -385,16 +390,22 @@ async function renderDashboard() {
     </div>
 
     <section class="panel">
-      <h3>Recent Sales</h3>
+      <div class="panel-header">
+        <h3>Recent Sales</h3>
+        <a href="#/sales" class="btn btn-ghost btn-sm">View All →</a>
+      </div>
       ${sales.length === 0 ? `<p class="muted">Abhi tak koi sale nahi hui.</p>` : `
       <table class="mini-table">
-        <thead><tr><th>Receipt</th><th>Date</th><th>Items</th><th>Total</th></tr></thead>
+        <thead><tr><th>Receipt</th><th>Date</th><th>Items</th><th>Total</th><th></th></tr></thead>
         <tbody>
-          ${sales.slice(0, 8).map(s => `<tr>
-            <td>${esc(s.receiptNo || s.id.slice(0, 6))}</td>
+          ${sales.slice(0, 8).map(s => `<tr class="${s.returned ? "row-returned" : ""}">
+            <td>${esc(s.receiptNo || s.id.slice(0, 6))}${s.returned ? ' <span class="badge-ret">RET</span>' : ""}</td>
             <td>${fmtDate(s.date)}</td>
             <td>${s.items.reduce((a, i) => a + i.qty, 0)}</td>
             <td>${money(s.total)}</td>
+            <td class="row-actions">
+              <button class="icon-btn" data-action="reprint-sale" data-id="${s.id}" title="Reprint">🖨</button>
+            </td>
           </tr>`).join("")}
         </tbody>
       </table>`}
@@ -415,13 +426,14 @@ function statCard(icon, label, value, tone) {
 
 async function renderPOS() {
   const products = await getProducts();
+  const customers = await getCustomers();
   const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
 
   $("#content").innerHTML = `
     <div class="pos-grid">
       <section class="panel pos-products">
         <div class="pos-search-row">
-          <input type="text" id="posSearch" placeholder="🔍 Product ya SKU search karen..." class="input"/>
+          <input type="text" id="posSearch" placeholder="🔍 Product / SKU / Barcode — Enter se add" class="input" autofocus/>
           <select id="posCategory" class="input input-sm">
             <option value="">All Categories</option>
             ${categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
@@ -431,17 +443,24 @@ async function renderPOS() {
       </section>
 
       <section class="panel pos-cart">
-        <h3>Cart</h3>
+        <h3>Cart <span class="cart-count" id="cartCount"></span></h3>
         <div id="cartItems" class="cart-items"></div>
         <div class="cart-summary" id="cartSummary"></div>
         <label class="mini-label">Customer (optional)</label>
-        <input type="text" id="posCustomer" class="input" placeholder="Customer name"/>
+        <select id="posCustomerSelect" class="input">
+          <option value="">— Walk-in / Type name —</option>
+          ${customers.map(c => `<option value="${esc(c.name)}" data-phone="${esc(c.phone || "")}">${esc(c.name)}${c.phone ? " · " + esc(c.phone) : ""}</option>`).join("")}
+        </select>
+        <input type="text" id="posCustomer" class="input" placeholder="Ya naya customer name likhen" style="margin-top:6px"/>
         <label class="mini-label">Discount (${esc((window.CFG && CFG.currencySymbol) || "")})</label>
-        <input type="number" id="posDiscount" class="input" value="0" min="0"/>
+        <input type="number" id="posDiscount" class="input" value="0" min="0" step="1"/>
         <label class="mini-label">Payment Method</label>
         <select id="posPayment" class="input">
-          <option>Cash</option><option>Card</option><option>Bank Transfer</option><option>Other</option>
+          <option>Cash</option><option>Card</option><option>JazzCash</option><option>EasyPaisa</option><option>Bank Transfer</option><option>Other</option>
         </select>
+        <label class="mini-label">Amount Received (change ke liye)</label>
+        <input type="number" id="posPaid" class="input" value="" min="0" placeholder="Optional"/>
+        <div id="posChange" class="change-box muted"></div>
         <button class="btn btn-primary btn-block btn-lg" data-action="checkout">✅ Checkout &amp; Print Receipt</button>
         <button class="btn btn-ghost btn-block" data-action="clear-cart">Clear Cart</button>
       </section>
@@ -452,6 +471,34 @@ async function renderPOS() {
 
   $("#posSearch").addEventListener("input", filterPosProducts);
   $("#posCategory").addEventListener("change", filterPosProducts);
+  $("#posSearch").addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const q = ($("#posSearch").value || "").trim().toLowerCase();
+      if (!q) return;
+      const all = await getProducts();
+      const match = all.find(p =>
+        (p.sku || "").toLowerCase() === q ||
+        p.name.toLowerCase() === q ||
+        (p.sku || "").toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q)
+      );
+      if (match && (match.stock || 0) > 0) {
+        await addToCart(match.id);
+        $("#posSearch").value = "";
+        filterPosProducts();
+        toast(match.name + " cart me add ✔");
+      } else if (match) {
+        toast("Out of stock: " + match.name, "warn");
+      } else {
+        toast("Product nahi mila.", "warn");
+      }
+    }
+  });
+  $("#posCustomerSelect").addEventListener("change", (e) => {
+    if (e.target.value) $("#posCustomer").value = e.target.value;
+  });
+  $("#posPaid").addEventListener("input", updateChange);
 }
 
 async function filterPosProducts() {
@@ -482,7 +529,7 @@ function renderCart() {
   const box = $("#cartItems");
   if (!box) return;
   if (App.cart.length === 0) {
-    box.innerHTML = `<p class="muted">Cart khali hai. Product par click karen.</p>`;
+    box.innerHTML = `<p class="muted">Cart khali hai. Product par click karen ya barcode scan karen.</p>`;
   } else {
     box.innerHTML = App.cart.map((it, idx) => `
       <div class="cart-row">
@@ -497,14 +544,40 @@ function renderCart() {
       </div>
     `).join("");
   }
+  const itemCount = App.cart.reduce((a, it) => a + it.qty, 0);
+  const countEl = $("#cartCount");
+  if (countEl) countEl.textContent = itemCount ? `(${itemCount})` : "";
   const subtotal = App.cart.reduce((a, it) => a + it.price * it.qty, 0);
   const discount = Number($("#posDiscount") ? $("#posDiscount").value : 0) || 0;
   const total = Math.max(0, subtotal - discount);
-  $("#cartSummary").innerHTML = `
-    <div class="sum-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
-    <div class="sum-row"><span>Discount</span><span>-${money(discount)}</span></div>
-    <div class="sum-row grand"><span>Total</span><span>${money(total)}</span></div>
-  `;
+  const sumEl = $("#cartSummary");
+  if (sumEl) {
+    sumEl.innerHTML = `
+      <div class="sum-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
+      <div class="sum-row"><span>Discount</span><span>-${money(discount)}</span></div>
+      <div class="sum-row grand"><span>Total</span><span>${money(total)}</span></div>
+    `;
+  }
+  updateChange();
+}
+
+function updateChange() {
+  const box = $("#posChange");
+  if (!box) return;
+  const subtotal = App.cart.reduce((a, it) => a + it.price * it.qty, 0);
+  const discount = Number($("#posDiscount") ? $("#posDiscount").value : 0) || 0;
+  const total = Math.max(0, subtotal - discount);
+  const paid = Number($("#posPaid") ? $("#posPaid").value : 0) || 0;
+  if (paid > 0) {
+    const change = paid - total;
+    box.innerHTML = change >= 0
+      ? `<b>Change wapas:</b> ${money(change)}`
+      : `<b class="warn-text">Kam hai:</b> ${money(Math.abs(change))} aur chahiye`;
+    box.className = "change-box " + (change >= 0 ? "good-text" : "warn-text");
+  } else {
+    box.innerHTML = "";
+    box.className = "change-box muted";
+  }
 }
 
 async function addToCart(productId) {
@@ -524,25 +597,44 @@ async function addToCart(productId) {
 async function checkout() {
   if (App.cart.length === 0) { toast("Cart khali hai.", "warn"); return; }
   const products = await getProducts();
+  // re-check stock before finalizing
+  for (const it of App.cart) {
+    const p = products.find(x => x.id === it.productId);
+    if (!p || (p.stock || 0) < it.qty) {
+      toast((p ? p.name : "Item") + " ke liye stock kam hai.", "bad");
+      return;
+    }
+  }
   const discount = Number($("#posDiscount").value) || 0;
   const subtotal = App.cart.reduce((a, it) => a + it.price * it.qty, 0);
   const total = Math.max(0, subtotal - discount);
+  const paidRaw = $("#posPaid") ? $("#posPaid").value : "";
+  const paid = paidRaw === "" ? total : (Number(paidRaw) || 0);
   const sale = {
     id: uid(),
     receiptNo: "R" + Date.now().toString().slice(-8),
     items: App.cart.map(it => ({ productId: it.productId, name: it.name, qty: it.qty, price: it.price, cost: it.cost })),
     subtotal, discount, total,
+    paid,
+    change: Math.max(0, paid - total),
     paymentMethod: $("#posPayment").value,
-    customerName: $("#posCustomer").value || "",
+    customerName: ($("#posCustomer").value || "").trim(),
     cashier: (App.user && (App.user.name || App.user.email)) || "",
     date: Date.now(),
   };
-  // decrement stock
   for (const it of sale.items) {
     const p = products.find(x => x.id === it.productId);
     if (p) {
       p.stock = Math.max(0, (p.stock || 0) - it.qty);
       await DB.put("products", p);
+    }
+  }
+  // auto-save new customer if name given and not already in list
+  if (sale.customerName) {
+    const customers = await getCustomers();
+    const exists = customers.find(c => c.name.toLowerCase() === sale.customerName.toLowerCase());
+    if (!exists) {
+      await DB.put("customers", { id: uid(), name: sale.customerName, phone: "" });
     }
   }
   await DB.put("sales", sale);
@@ -556,8 +648,6 @@ async function checkout() {
 /* ---------------------------------------------------------------------- */
 /* Purchase / Stock-In (wholesale)                                         */
 /* ---------------------------------------------------------------------- */
-
-App.purchaseCart = [];
 
 async function renderPurchase() {
   const suppliers = await getSuppliers();
@@ -795,6 +885,97 @@ async function saveProductForm(form) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Sales History                                                           */
+/* ---------------------------------------------------------------------- */
+
+async function renderSalesHistory() {
+  const sales = await getSales();
+  const q = (App.salesFilter || "").toLowerCase();
+  const filtered = q
+    ? sales.filter(s =>
+        (s.receiptNo || "").toLowerCase().includes(q) ||
+        (s.customerName || "").toLowerCase().includes(q) ||
+        (s.paymentMethod || "").toLowerCase().includes(q) ||
+        (s.items || []).some(it => (it.name || "").toLowerCase().includes(q))
+      )
+    : sales;
+
+  const activeSales = filtered.filter(s => !s.returned);
+  const totalAmt = activeSales.reduce((a, s) => a + (s.total || 0), 0);
+
+  $("#content").innerHTML = `
+    <section class="panel">
+      <div class="panel-header">
+        <h3>Sales History (${filtered.length}) · ${money(totalAmt)}</h3>
+      </div>
+      <div class="pos-search-row">
+        <input type="text" id="salesSearch" class="input" placeholder="🔍 Receipt #, customer, product..." value="${esc(App.salesFilter || "")}"/>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Receipt</th><th>Date</th><th>Customer</th><th>Items</th>
+              <th>Payment</th><th>Total</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.length === 0 ? `<tr><td colspan="8" class="muted">Koi sale nahi mili.</td></tr>` :
+              filtered.map(s => `
+              <tr class="${s.returned ? "row-returned" : ""}">
+                <td>${esc(s.receiptNo || s.id.slice(0, 8))}</td>
+                <td>${fmtDate(s.date)}</td>
+                <td>${esc(s.customerName || "—")}</td>
+                <td>${(s.items || []).reduce((a, i) => a + i.qty, 0)}</td>
+                <td>${esc(s.paymentMethod || "Cash")}</td>
+                <td>${money(s.total)}</td>
+                <td>${s.returned ? '<span class="badge-ret">Returned</span>' : '<span class="badge-ok">OK</span>'}</td>
+                <td class="row-actions">
+                  <button class="icon-btn" data-action="view-sale" data-id="${s.id}" title="Details">👁</button>
+                  <button class="icon-btn" data-action="reprint-sale" data-id="${s.id}" title="Print">🖨</button>
+                  ${!s.returned ? `<button class="icon-btn" data-action="return-sale" data-id="${s.id}" title="Return">↩</button>` : ""}
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+  $("#salesSearch").addEventListener("input", (e) => {
+    App.salesFilter = e.target.value;
+    clearTimeout(App._salesTimer);
+    App._salesTimer = setTimeout(() => renderSalesHistory(), 250);
+  });
+}
+
+async function viewSaleDetails(id) {
+  const sale = await DB.get("sales", id);
+  if (!sale) return;
+  const itemsHtml = (sale.items || []).map(it =>
+    `<tr><td>${esc(it.name)}</td><td>${it.qty}</td><td>${money(it.price)}</td><td>${money(it.qty * it.price)}</td></tr>`
+  ).join("");
+  openModal(`
+    <h3>Receipt ${esc(sale.receiptNo || sale.id)}</h3>
+    <p class="muted">${fmtDate(sale.date)} · ${esc(sale.paymentMethod || "Cash")}${sale.returned ? " · <b class='warn-text'>RETURNED</b>" : ""}</p>
+    ${sale.customerName ? `<p><b>Customer:</b> ${esc(sale.customerName)}</p>` : ""}
+    <table class="mini-table" style="margin:12px 0">
+      <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
+      <tbody>${itemsHtml}</tbody>
+    </table>
+    <div class="sum-row"><span>Subtotal</span><span>${money(sale.subtotal)}</span></div>
+    ${sale.discount ? `<div class="sum-row"><span>Discount</span><span>-${money(sale.discount)}</span></div>` : ""}
+    <div class="sum-row grand"><span>Total</span><span>${money(sale.total)}</span></div>
+    ${sale.paid != null ? `<div class="sum-row"><span>Paid</span><span>${money(sale.paid)}</span></div>` : ""}
+    ${sale.change ? `<div class="sum-row"><span>Change</span><span>${money(sale.change)}</span></div>` : ""}
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-action="close-modal">Close</button>
+      <button type="button" class="btn btn-primary" data-action="reprint-sale" data-id="${sale.id}">🖨 Print</button>
+      ${!sale.returned ? `<button type="button" class="btn btn-outline" data-action="return-sale" data-id="${sale.id}">↩ Return</button>` : ""}
+    </div>
+  `, true);
+}
+
+/* ---------------------------------------------------------------------- */
 /* Suppliers / Customers / Expenses — simple CRUD lists                    */
 /* ---------------------------------------------------------------------- */
 
@@ -824,7 +1005,10 @@ async function renderExpenses() {
           <tbody>
             ${rows.map(e => `<tr>
               <td>${esc(e.title)}</td><td>${esc(e.category || "")}</td><td>${money(e.amount)}</td><td>${fmtDateOnly(e.date)}</td>
-              <td class="row-actions"><button class="icon-btn" data-action="delete-expense" data-id="${e.id}">🗑</button></td>
+              <td class="row-actions">
+                <button class="icon-btn" data-action="edit-expense" data-id="${e.id}">✏️</button>
+                <button class="icon-btn" data-action="delete-expense" data-id="${e.id}">🗑</button>
+              </td>
             </tr>`).join("") || `<tr><td colspan="5" class="muted">Koi expense nahi.</td></tr>`}
           </tbody>
         </table>
@@ -885,14 +1069,17 @@ function customerFormModal(rec) {
       </div>
     </form>`);
 }
-function expenseFormModal() {
+function expenseFormModal(rec) {
+  const r = rec || { title: "", category: "", amount: "", date: Date.now() };
+  const dateVal = r.date ? new Date(r.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
   openModal(`
-    <h3>Add Expense</h3>
+    <h3>${rec ? "Edit" : "Add"} Expense</h3>
     <form id="expenseForm">
-      <label class="mini-label">Title</label><input class="input" name="title" required placeholder="e.g. Shop Rent"/>
-      <label class="mini-label">Category</label><input class="input" name="category" placeholder="Rent / Bills / Salary / Other"/>
-      <label class="mini-label">Amount</label><input class="input" type="number" name="amount" min="0" required/>
-      <label class="mini-label">Date</label><input class="input" type="date" name="date" value="${new Date().toISOString().slice(0, 10)}"/>
+      <input type="hidden" name="id" value="${r.id || ""}"/>
+      <label class="mini-label">Title</label><input class="input" name="title" required placeholder="e.g. Shop Rent" value="${esc(r.title || "")}"/>
+      <label class="mini-label">Category</label><input class="input" name="category" placeholder="Rent / Bills / Salary / Other" value="${esc(r.category || "")}"/>
+      <label class="mini-label">Amount</label><input class="input" type="number" name="amount" min="0" required value="${r.amount || ""}"/>
+      <label class="mini-label">Date</label><input class="input" type="date" name="date" value="${dateVal}"/>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
         <button type="submit" class="btn btn-primary">Save</button>
@@ -1003,7 +1190,10 @@ async function returnSale(id) {
   await DB.put("returns", { id: uid(), saleId: sale.id, items: sale.items, amount: sale.total, date: Date.now() });
   await logAudit("return", sale.receiptNo);
   toast("Sale return ho gayi, stock update ho gaya.", "ok");
-  await renderReports();
+  const route = (location.hash.replace("#/", "") || "dashboard").split("?")[0];
+  if (route === "sales") await renderSalesHistory();
+  else if (route === "reports") await renderReports();
+  else await render();
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1125,13 +1315,25 @@ document.addEventListener("click", async (e) => {
 
     // POS
     case "add-to-cart": await addToCart(id); break;
-    case "cart-inc": App.cart[el.dataset.idx].qty++; renderCart(); break;
-    case "cart-dec": {
-      const it = App.cart[el.dataset.idx];
-      it.qty--; if (it.qty <= 0) App.cart.splice(el.dataset.idx, 1);
-      renderCart(); break;
+    case "cart-inc": {
+      const idx = Number(el.dataset.idx);
+      const it = App.cart[idx];
+      if (!it) break;
+      if (it.qty >= (it.stock || 0)) { toast("Stock limit — zyada add nahi kar sakte.", "warn"); break; }
+      it.qty++;
+      renderCart();
+      break;
     }
-    case "cart-remove": App.cart.splice(el.dataset.idx, 1); renderCart(); break;
+    case "cart-dec": {
+      const idx = Number(el.dataset.idx);
+      const it = App.cart[idx];
+      if (!it) break;
+      it.qty--;
+      if (it.qty <= 0) App.cart.splice(idx, 1);
+      renderCart();
+      break;
+    }
+    case "cart-remove": App.cart.splice(Number(el.dataset.idx), 1); renderCart(); break;
     case "clear-cart": App.cart = []; renderCart(); break;
     case "checkout": await checkout(); break;
 
@@ -1157,15 +1359,17 @@ document.addEventListener("click", async (e) => {
     case "delete-customer": if (confirm("Customer delete karna hai?")) { await DB.remove("customers", id); renderCustomers(); } break;
 
     // Expenses
-    case "new-expense": expenseFormModal(); break;
+    case "new-expense": expenseFormModal(null); break;
+    case "edit-expense": expenseFormModal(await DB.get("expenses", id)); break;
     case "delete-expense": if (confirm("Expense delete karna hai?")) { await DB.remove("expenses", id); renderExpenses(); } break;
 
-    // Reports
+    // Reports / Sales
     case "set-range": App.reportRange = el.dataset.range; renderReports(); break;
     case "apply-range": App.reportFrom = $("#rangeFrom").value; App.reportTo = $("#rangeTo").value; renderReports(); break;
     case "export-sales-csv": await exportSalesCsv(); break;
-    case "reprint-sale": { const s = await DB.get("sales", id); if (s) Receipt.print(s); break; }
-    case "return-sale": await returnSale(id); break;
+    case "reprint-sale": { const s = await DB.get("sales", id); if (s) { closeModal(); Receipt.print(s); } break; }
+    case "return-sale": closeModal(); await returnSale(id); break;
+    case "view-sale": await viewSaleDetails(id); break;
 
     // Settings
     case "export-backup": await exportBackup(); break;
@@ -1248,8 +1452,11 @@ document.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     await DB.put("expenses", {
-      id: uid(), title: fd.get("title").trim(), category: fd.get("category").trim(),
-      amount: Number(fd.get("amount")) || 0, date: new Date(fd.get("date")).getTime() || Date.now()
+      id: fd.get("id") || uid(),
+      title: fd.get("title").trim(),
+      category: fd.get("category").trim(),
+      amount: Number(fd.get("amount")) || 0,
+      date: new Date(fd.get("date")).getTime() || Date.now()
     });
     closeModal(); toast("Expense save ho gaya."); renderExpenses();
   }
@@ -1257,10 +1464,27 @@ document.addEventListener("submit", async (e) => {
 
 document.addEventListener("input", (e) => {
   if (e.target.id === "posDiscount") renderCart();
+  if (e.target.id === "posPaid") updateChange();
 });
 
 window.addEventListener("hashchange", render);
-window.addEventListener("sm:synced", () => { if (App.user) render(); });
+
+let _syncRenderTimer = null;
+window.addEventListener("sm:synced", () => {
+  if (!App.user) return;
+  clearTimeout(_syncRenderTimer);
+  _syncRenderTimer = setTimeout(() => {
+    const route = (location.hash.replace("#/", "") || "dashboard").split("?")[0];
+    const modalOpen = !!document.getElementById("modalOverlay");
+    const typing = document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
+    const midTask = route === "pos" || route === "purchase";
+    // Don't yank the screen while someone is filling a cart, a form, or has a
+    // modal open — incoming cloud data will simply show up next time they
+    // navigate or once they're done. Anywhere else, a quiet refresh is safe.
+    if (modalOpen || typing || midTask) return;
+    render();
+  }, 1200);
+});
 
 window.addEventListener("beforeinstallprompt", (e) => {
   e.preventDefault();
@@ -1275,10 +1499,6 @@ async function boot() {
   await ensureLocalAdmin();
   const session = await DB.getMeta("session");
   if (session) App.user = session;
-
-  if (window.SMSync) {
-    window.addEventListener("sm:synced", () => {}); // placeholder for future hooks
-  }
 
   if (!location.hash) location.hash = "#/dashboard";
   render();

@@ -75,6 +75,8 @@ window.Receipt = {
     ${sale.discount ? `<tr><td>Discount</td><td class="amt">-${this.fmt(sale.discount)}</td></tr>` : ""}
     <tr class="grand"><td>Total</td><td class="amt">${this.fmt(sale.total)}</td></tr>
     <tr><td>Paid via</td><td class="amt">${this._escapeHtml(sale.paymentMethod || "Cash")}</td></tr>
+    ${sale.paid != null ? `<tr><td>Received</td><td class="amt">${this.fmt(sale.paid)}</td></tr>` : ""}
+    ${sale.change ? `<tr><td>Change</td><td class="amt">${this.fmt(sale.change)}</td></tr>` : ""}
   </table>
   <div class="divider"></div>
   <p class="footer">${this._escapeHtml(cfg.receiptFooterNote || "Thank you!")}</p>

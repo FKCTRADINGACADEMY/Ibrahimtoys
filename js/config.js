@@ -11,7 +11,7 @@
 
 window.CFG = {
   // Shop identity (dikhne wala naam / logo)
-  shopName: "Ibrahim Toy & Costomestic Shop",
+  shopName: "Ibrahim Toy & Cosmetic Shop",
   shopTagline: "Toys for Fun, Beauty for Everyone",
   shopLogo: "assets/logo.png",
   currency: "PKR",
