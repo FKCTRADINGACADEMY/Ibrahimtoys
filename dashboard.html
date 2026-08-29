@@ -29,9 +29,17 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
         Overview
       </button>
+      <button class="nav-item" data-view="billing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1.4"/><circle cx="18" cy="21" r="1.4"/><path d="M2.5 3h2.4l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 7H6"/></svg>
+        Billing / POS
+      </button>
       <button class="nav-item" data-view="inventory">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 8l-8-5-8 5v8l8 5 8-5V8z"/><path d="M12 12l8-5M12 12v9M12 12L4 7"/></svg>
         Inventory
+      </button>
+      <button class="nav-item" data-view="sales">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19h16M6 15l3-4 3 2 4-6"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        Sales History
       </button>
     </nav>
     <div class="sidebar-foot">
@@ -59,7 +67,7 @@
     </div>
 
     <!-- OVERVIEW VIEW -->
-    <section id="view-overview">
+    <section id="view-overview" class="view-section">
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-label"><span class="stat-swatch" style="background:var(--ink)"></span> Total Products</div>
@@ -86,14 +94,98 @@
         </div>
       </div>
 
-      <div class="panel">
+      <div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-swatch" style="background:var(--success)"></span> Today's Sales</div>
+          <div class="stat-value" id="statTodaySales">Rs. 0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-swatch" style="background:var(--toy-amber)"></span> Today's Profit</div>
+          <div class="stat-value" id="statTodayProfit">Rs. 0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><span class="stat-swatch" style="background:var(--cosmetic-rose)"></span> Invoices Today</div>
+          <div class="stat-value" id="statTodayInvoices">0</div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:28px;">
         <div class="panel-head"><h3>Low Stock Alerts</h3></div>
         <div id="lowStockList"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Recent Sales</h3></div>
+        <div id="recentSalesList"></div>
+      </div>
+    </section>
+
+    <!-- BILLING / POS VIEW -->
+    <section id="view-billing" class="view-section" style="display:none;">
+      <div class="pos-layout">
+        <div class="panel pos-products-panel">
+          <div class="panel-head">
+            <div class="chip-group" id="billFilterChips">
+              <button class="chip active" data-cat="All">All</button>
+              <button class="chip" data-cat="Toys">Toys</button>
+              <button class="chip" data-cat="Cosmetics">Cosmetics</button>
+            </div>
+            <div class="toolbar">
+              <div class="search-box">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                <input type="text" id="billSearchInput" placeholder="Search product or SKU...">
+              </div>
+            </div>
+          </div>
+          <div id="posProductGrid" class="product-grid pos-product-grid"></div>
+        </div>
+
+        <div class="panel cart-panel">
+          <div class="panel-head"><h3>Current Sale</h3><button class="btn btn-ghost btn-sm" id="clearCartBtn">Clear</button></div>
+          <div id="cartItemsList" class="cart-items-list"></div>
+
+          <div class="cart-form">
+            <div class="form-row">
+              <div class="field">
+                <label for="custName">Customer Name (optional)</label>
+                <input type="text" id="custName" placeholder="Walk-in customer">
+              </div>
+              <div class="field">
+                <label for="custPhone">Phone (optional)</label>
+                <input type="text" id="custPhone" placeholder="03xx-xxxxxxx">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label for="discountInput">Discount (Rs.)</label>
+                <input type="number" id="discountInput" min="0" step="0.01" value="0">
+              </div>
+              <div class="field">
+                <label for="paymentMethod">Payment Method</label>
+                <select id="paymentMethod">
+                  <option value="Cash">Cash</option>
+                  <option value="Card">Card</option>
+                  <option value="EasyPaisa">EasyPaisa</option>
+                  <option value="JazzCash">JazzCash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="cart-summary">
+            <div class="cart-summary-row"><span>Subtotal</span><span id="cartSubtotal">Rs. 0</span></div>
+            <div class="cart-summary-row"><span>Discount</span><span id="cartDiscount">Rs. 0</span></div>
+            <div class="cart-summary-row total"><span>Total</span><span id="cartTotal">Rs. 0</span></div>
+          </div>
+
+          <button class="btn btn-primary" id="checkoutBtn" style="width:100%; justify-content:center; padding:14px;">Complete Sale &amp; Print Invoice</button>
+        </div>
       </div>
     </section>
 
     <!-- INVENTORY VIEW -->
-    <section id="view-inventory" style="display:none;">
+    <section id="view-inventory" class="view-section" style="display:none;">
       <div class="panel">
         <div class="panel-head">
           <div class="chip-group" id="filterChips">
@@ -113,8 +205,54 @@
         <div id="productGrid" class="product-grid"></div>
       </div>
     </section>
+
+    <!-- SALES HISTORY VIEW -->
+    <section id="view-sales" class="view-section" style="display:none;">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="toolbar">
+            <div class="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+              <input type="text" id="salesSearchInput" placeholder="Search invoice # or customer...">
+            </div>
+            <input type="date" id="salesDateFilter" class="date-input">
+            <button class="btn btn-ghost btn-sm" id="clearSalesFilterBtn">Clear Filter</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="sales-table">
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Date</th>
+                <th>Customer</th>
+                <th>Items</th>
+                <th>Payment</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="salesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
+
+<!-- INVOICE PREVIEW MODAL -->
+<div class="modal-overlay" id="invoiceModalOverlay">
+  <div class="modal-box invoice-modal-box">
+    <div id="invoicePreviewContent"></div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-ghost" id="closeInvoiceModalBtn">Close</button>
+      <button type="button" class="btn btn-primary" id="printInvoiceBtn">🖨 Print Invoice</button>
+    </div>
+  </div>
+</div>
+
+<!-- PRINT-ONLY INVOICE -->
+<div id="printInvoice" class="print-only"></div>
 
 <!-- ADD / EDIT MODAL -->
 <div class="modal-overlay" id="modalOverlay">
@@ -179,6 +317,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/inventory.js"></script>
+<script src="js/pos.js"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => navigator.serviceWorker.register("sw.js"));

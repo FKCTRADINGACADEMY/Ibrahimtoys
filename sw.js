@@ -6,7 +6,7 @@
 // separately handles the actual product DATA offline/online sync.
 // ============================================================
 
-const CACHE_VERSION = "ibrahim-toys-v1";
+const CACHE_VERSION = "ibrahim-toys-v2";
 
 const PRECACHE_URLS = [
   "./",
@@ -17,6 +17,7 @@ const PRECACHE_URLS = [
   "./js/firebase-config.js",
   "./js/auth.js",
   "./js/inventory.js",
+  "./js/pos.js",
   "./icons/icon-72.png",
   "./icons/icon-96.png",
   "./icons/icon-128.png",

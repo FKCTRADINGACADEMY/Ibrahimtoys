@@ -1,15 +1,18 @@
-# Ibrahim Toys & Cosmetics — Inventory Management
+# Ibrahim Toys & Cosmetics — POS, Invoicing &amp; Inventory
 
-Modern, offline-first inventory management app. Sirf shop admin login kar sakta hai (koi customer signup nahi). Firestore ki offline persistence ki wajah se dukaan mein internet na ho tab bhi kaam karta hai — jaise hi connection wapas aata hai, sab data khud-ba-khud sync ho jata hai.
+Modern, offline-first POS (Point of Sale) and inventory management app. Sirf shop admin login kar sakta hai (koi customer signup nahi). Firestore ki offline persistence ki wajah se dukaan mein internet na ho tab bhi kaam karta hai — jaise hi connection wapas aata hai, sab data (stock + sales) khud-ba-khud sync ho jata hai.
 
 ## Features
 - Admin-only login (email + password)
-- Add / edit / delete products
-- Toys aur Cosmetics categories
+- **Billing / POS screen** — product picker, cart, quantity control, discount, customer name/phone, payment method (Cash / Card / EasyPaisa / JazzCash / Bank Transfer)
+- **Invoice generation & printing** — auto invoice number, printable receipt, reprint anytime from Sales History
+- **Auto stock deduction** on every sale (and auto restock if an invoice is deleted)
+- **Sales History** — search by invoice #/customer, filter by date, view/reprint/delete any invoice
+- Add / edit / delete products, Toys aur Cosmetics categories
 - Real-time stock tracking + low-stock alerts
-- Offline support (Firestore local cache, auto-sync)
+- Dashboard: total products, category counts, low stock, stock value, today's sales, today's profit, invoices today, recent sales
+- Offline support (Firestore local cache, auto-sync) — billing works even with no internet, sales queue up and sync later
 - Search + category filters
-- Dashboard: total products, category counts, low stock, total stock value
 - Light/Dark mode
 - Fully responsive (mobile/tablet/desktop)
 - **Installable PWA** — phone/laptop par app ki tarah install ho sakta hai, apna icon aur offline app-shell ke sath
@@ -42,7 +45,7 @@ No build step, no npm needed — sirf plain HTML/CSS/JS hai jo directly browser 
 2. **Build → Authentication → Get Started** → **Sign-in method** tab → **Email/Password** ko enable karein.
 3. **Authentication → Users → Add user** → apna admin email + password dalein. Yehi credentials login page par use hongi.
 4. **Build → Firestore Database → Create database** → production mode mein start karein (agar pehle se nahi bani).
-5. **Firestore → Rules** tab mein jaayein aur is repo ki `firestore.rules` file ka content paste karke **Publish** karein — is se sirf logged-in admin hi data padh/likh sakega.
+5. **Firestore → Rules** tab mein jaayein aur is repo ki `firestore.rules` file ka content paste karke **Publish** karein — is se sirf logged-in admin hi data (products aur sales dono) padh/likh sakega.
 
 Bas! Ab app ready hai use karne ke liye.
 
