@@ -42,7 +42,7 @@ function renderNotifications() {
       <div class="notif-row">
         <div class="notif-row-icon danger">⚠️</div>
         <div>
-          <div class="notif-row-title">${escapeHtml(p.name)} low on stock</div>
+          <div class="notif-row-title">${getProductEmoji(p)} ${escapeHtml(p.name)} low on stock</div>
           <div class="notif-row-sub">Sirf ${p.stock} units bache hain (${escapeHtml(p.category)})</div>
         </div>
       </div>`);
@@ -139,7 +139,7 @@ function renderBestsellerList() {
     <div class="bestseller-row">
       <div class="bestseller-rank">${i + 1}</div>
       <div class="bestseller-info">
-        <div class="bestseller-name">${escapeHtml(p.name)}</div>
+        <div class="bestseller-name">${getProductEmoji(p)} ${escapeHtml(p.name)}</div>
         <div class="bestseller-sub">${escapeHtml(p.category || "")}</div>
         <div class="bestseller-bar-track"><div class="bestseller-bar-fill" style="width:${Math.round((p.qty / maxQty) * 100)}%;"></div></div>
       </div>

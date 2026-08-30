@@ -32,6 +32,7 @@ const VIEW_TITLES = {
   bestsellers: "Best Sellers",
   offers: "Offers",
   customers: "Customers",
+  returns: "Returns",
 };
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -116,7 +117,7 @@ function renderLowStock() {
     .map(
       (p) => `
     <div class="low-stock-row">
-      <span>${escapeHtml(p.name)} <span style="color:var(--text-muted); font-size:12.5px;">(${escapeHtml(p.category)})</span></span>
+      <span>${getProductEmoji(p)} ${escapeHtml(p.name)} <span style="color:var(--text-muted); font-size:12.5px;">(${escapeHtml(p.category)})</span></span>
       <span class="badge">${p.stock} left</span>
     </div>`
     )
@@ -168,7 +169,7 @@ function productCard(p) {
   <div class="product-card">
     <span class="cat-tag ${escapeHtml(p.category)}">${escapeHtml(p.category)}</span>
     <div>
-      <div class="p-name">${escapeHtml(p.name)}</div>
+      <div class="p-name">${getProductEmoji(p)} ${escapeHtml(p.name)}</div>
       <div class="p-sku">SKU: ${escapeHtml(p.sku || "—")}</div>
     </div>
     <div class="p-price-row">

@@ -67,7 +67,7 @@ function renderPosProductGrid() {
       <div class="product-card pos-card ${out ? "out-of-stock" : ""}" data-add="${p.id}">
         <span class="cat-tag ${escapeHtml(p.category)}">${escapeHtml(p.category)}</span>
         <div>
-          <div class="p-name">${escapeHtml(p.name)}</div>
+          <div class="p-name">${getProductEmoji(p)} ${escapeHtml(p.name)}</div>
           <div class="p-sku">SKU: ${escapeHtml(p.sku || "—")} · ${stock} in stock</div>
         </div>
         <div class="p-price-row">
@@ -161,7 +161,7 @@ function renderCart() {
         (c) => `
       <div class="cart-item">
         <div class="cart-item-info">
-          <div class="cart-item-name">${escapeHtml(c.name)}</div>
+          <div class="cart-item-name">${getProductEmoji(c)} ${escapeHtml(c.name)}</div>
           <div class="cart-item-price">${money(c.price)} x ${c.qty} = ${money(c.price * c.qty)}</div>
         </div>
         <div class="cart-item-qty">
@@ -287,7 +287,7 @@ function invoiceHtml(sale) {
     .map(
       (it) => `
     <tr>
-      <td>${escapeHtml(it.name)}</td>
+      <td>${getProductEmoji(it)} ${escapeHtml(it.name)}</td>
       <td>${it.qty}</td>
       <td>${money(it.price)}</td>
       <td>${money(it.lineTotal)}</td>
