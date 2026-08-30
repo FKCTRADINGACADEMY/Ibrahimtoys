@@ -487,6 +487,13 @@ a:focus-visible {
 }
 .stat-swatch { width: 9px; height: 9px; border-radius: 3px; }
 
+.stat-card.clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.stat-card.clickable:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+.stat-card.clickable:active { transform: scale(0.97); }
+
 /* ---------- Stat cards: ticket style (dashboard overview) ---------- */
 .stat-grid-2col {
   display: grid;
