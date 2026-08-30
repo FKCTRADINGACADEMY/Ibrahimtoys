@@ -1,95 +1,91 @@
 // ============================================================
-// SERVICE WORKER — Ibrahim Toys & Cosmetics
-// Caches the app shell (HTML/CSS/JS/icons/fonts/Firebase SDK)
-// so the installed PWA can open even with no internet.
-// Firestore's own offline persistence (see firebase-config.js)
-// separately handles the actual product DATA offline/online sync.
+// SERVICE WORKER — auto-updating app shell.
+//
+// HTML / CSS / JS are served NETWORK-FIRST: har baar jab user
+// online ho aur app kholay, browser latest file seedha server se
+// leta hai (cache sirf offline fallback ke liye hai). Iska matlab
+// naya dashboard.html / js / css upload karne ke baad, agli baar
+// app kholte hi automatically naya version mil jayega —
+// "clear cache" karne ki zaroorat nahi.
+//
+// Sirf images/icons/fonts CACHE-FIRST hain (yeh kam badalte hain,
+// isliye fast + offline-friendly rakhe gaye hain).
+//
+// CACHE_NAME ko sirf tab badlein jab aap chahte hain purana
+// offline-cache poori tarah wipe ho jaye (e.g. bahut saari purani
+// files delete ki hon) — warna isay chhed'ne ki zaroorat nahi,
+// updates apne aap chalte rahenge.
 // ============================================================
 
-const CACHE_VERSION = "ibrahim-toys-v4";
+const CACHE_NAME = "sm-shop-cache-v1";
 
+// Sirf truly-static files pre-cache hoti hain.
 const PRECACHE_URLS = [
-  "./",
-  "./index.html",
-  "./dashboard.html",
-  "./manifest.json",
-  "./css/style.css",
-  "./js/firebase-config.js",
-  "./js/auth.js",
-  "./js/inventory.js",
-  "./js/pos.js",
-  "./js/extra.js",
-  "./img/logo-64.png",
-  "./img/logo-256.png",
-  "./icons/icon-72.png",
-  "./icons/icon-96.png",
-  "./icons/icon-128.png",
-  "./icons/icon-144.png",
-  "./icons/icon-152.png",
-  "./icons/icon-192.png",
-  "./icons/icon-384.png",
-  "./icons/icon-512.png",
-  "./icons/icon-maskable-512.png",
-  "https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap",
-  "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js",
-  "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js",
-  "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js",
+  "manifest.json",
+  "favicon.ico",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
 ];
 
+const STATIC_EXT = /\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf)$/i;
+
 self.addEventListener("install", (event) => {
+  self.skipWaiting(); // naya SW turant activate ho, purane tabs band hone ka intezar nahi
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) =>
-      Promise.all(
-        PRECACHE_URLS.map((url) =>
-          cache.add(url).catch((err) => console.warn("SW precache skip:", url, err))
-        )
-      )
-    )
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS).catch(() => {}))
   );
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)))
-    )
+    (async () => {
+      // Kisi bhi purane cache-name ko khud-ba-khud delete kar do.
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)));
+      await self.clients.claim(); // khule hue tabs ko turant control mein le lo
+    })()
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-
-  // Only handle simple GET requests. Let everything else
-  // (Firestore/Auth XHR & websocket traffic, POST, etc.) pass through untouched.
   if (req.method !== "GET") return;
 
-  // Never intercept Firebase/Google API calls — Firestore/Auth manage
-  // their own network + offline behaviour and must not be cached here.
   const url = new URL(req.url);
-  if (
-    url.hostname.includes("firestore.googleapis.com") ||
-    url.hostname.includes("identitytoolkit.googleapis.com") ||
-    url.hostname.includes("googleapis.com") && !url.hostname.includes("fonts.googleapis.com")
-  ) {
+  if (url.origin !== self.location.origin) return; // Firebase/CDN requests ko normal jaane do
+
+  // Static assets: cache-first (fast, kam badalti hain)
+  if (STATIC_EXT.test(url.pathname)) {
+    event.respondWith(
+      caches.match(req).then(
+        (cached) =>
+          cached ||
+          fetch(req).then((res) => {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+            return res;
+          })
+      )
+    );
     return;
   }
 
+  // App shell (HTML/CSS/JS): NETWORK-FIRST — hamesha latest file
+  // fetch karne ki koshish; sirf offline hone par cache se fallback.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const networkFetch = fetch(req)
-        .then((res) => {
-          if (res && res.status === 200) {
-            const copy = res.clone();
-            caches.open(CACHE_VERSION).then((cache) => cache.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-
-      // Stale-while-revalidate: serve cache instantly if present, refresh in background.
-      return cached || networkFetch;
-    })
+    fetch(req)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        return res;
+      })
+      .catch(() =>
+        caches.match(req).then((cached) => cached || caches.match("index.html"))
+      )
   );
+});
+
+// Page se manually bhi naya SW turant activate karwaya ja sakta hai.
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING") self.skipWaiting();
 });
